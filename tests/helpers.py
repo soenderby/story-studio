@@ -18,6 +18,7 @@ from story_studio import paths, server  # noqa: E402
 
 REAL_WEB = SRC / 'story_studio' / 'web'
 LOCAL = build_opener(ProxyHandler({}))
+CLOSED_URL = 'http://127.0.0.1:1/'  # Nothing listens on port 1.
 
 
 def make_web(folder):
@@ -44,13 +45,15 @@ class TempHome(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.base = Path(self.temp.name)
+        # Resolved, as the server resolves story folders: CI's %TEMP% is an 8.3 short path (RUNNER~1).
+        self.base = Path(self.temp.name).resolve()
         self.home = self.base / 'home'
         self.home.mkdir()
         self.stories = self.base / 'stories'
         self.stories.mkdir()
         self.web = make_web(self.base / 'web')
-        patches = [mock.patch.dict(os.environ, {'STORY_STUDIO_HOME': str(self.home)}),
+        # The update URL points at a closed local port, so no test ever contacts GitHub.
+        patches = [mock.patch.dict(os.environ, {'STORY_STUDIO_HOME': str(self.home), 'STORY_STUDIO_UPDATE_URL': CLOSED_URL}),
                    mock.patch.object(paths, 'WEB_DIR', self.web)]
         for patch in patches:
             patch.start()

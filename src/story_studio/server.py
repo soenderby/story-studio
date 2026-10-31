@@ -17,7 +17,7 @@ from urllib.parse import unquote, urlsplit
 from . import desktop, paths
 from .registry import Registry, Settings, now
 from .story import MAX_BODY, PROJECT_NAME, Studio, byte_range, encode, media_type, prepare_story
-from .updates import Updater
+from .updates import Conflict, Updater
 from .version import __version__
 
 SERVER_VERSION = 6  # Bump when the project format or API changes, so stale instances are detected.
@@ -319,7 +319,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/update/check':
             self.json(200, server.updater.check())
         elif path == '/api/update/install':
-            self.json(200, server.updater.install())
+            try:
+                self.json(200, server.updater.install())
+            except Conflict as error:
+                raise Refused(409, str(error)) from None
         elif path == '/api/update/skip':
             self.json(200, server.updater.skip(body.get('version')))
         elif (match := STORY_ROUTE.fullmatch(path)) and match[2] == '/api/project':

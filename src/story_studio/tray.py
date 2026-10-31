@@ -106,7 +106,7 @@ def _check_for_updates(url):
     try:
         request = Request(url + 'api/update/check', data=b'{}', method='POST',
                           headers={'X-Story-Token': _token(), 'Content-Type': 'application/json'})
-        with _local.open(request, timeout=30) as response:
+        with _local.open(request, timeout=60) as response:  # a check makes two requests to GitHub
             response.read()
     except Exception as error:  # the home page shows the result or the error itself
         log.warning('Update check failed: %s', error)

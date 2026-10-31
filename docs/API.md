@@ -24,7 +24,8 @@ settings.json    {"version": 1, "port": 8765, "checkUpdates": true, "skippedVers
 instance.json    {"pid", "port", "token", "appVersion", "api"}   written by the running instance, removed on exit
 logs/studio.log  rotating, 1 MB × 3
 logs/tray.log    StoryStudio.exe's tray and startup errors, rotating, 1 MB × 3 (phase 3)
-updates/         downloaded installers; deleted after a successful install
+updates/         the installer being downloaded (<installer>.part) or run, and install-<version>.log (Inno Setup's log);
+                 on every start, everything but the newest install log is deleted
 ```
 
 All app-data JSON is written with the existing `atomic_write`. An unreadable `stories.json` is renamed to `stories.json.corrupt-<timestamp>` and a fresh registry started; if only some entries are malformed, the original is kept the same way and the readable entries are saved. An unreadable `settings.json` is set aside likewise and the defaults used. Story folders are never touched by that.
@@ -106,10 +107,12 @@ Unknown or missing story → `404 {"error"}` for the API and media routes. `edit
 | --- | --- | --- |
 | `GET /api/update` | | `UpdateState` |
 | `POST /api/update/check` | | Forces a check now, returns `UpdateState` |
-| `POST /api/update/install` | | Starts download → verify → install. Returns immediately, `UpdateState` with `state: "downloading"`. The phase 1 stub (`updates.py`) answers `501 {"error"}`. |
+| `POST /api/update/install` | | Starts download → verify → install. Returns immediately, `UpdateState` with `state: "downloading"`. `409 {"error"}` when no update is available, or a check or install is already running. `501 {"error"}` when not running as the installed Windows app (`StoryStudio.exe`): from source it can check, but not install. |
 | `POST /api/update/skip` | `{"version"}` | Hides the banner for that version |
 
 `UpdateState` = `{"current": "0.2.0", "latest": "0.3.0" | null, "available": bool, "skipped": bool, "notes": "markdown", "publishedAt", "state": "idle" | "checking" | "downloading" | "verifying" | "installing" | "error", "progress": 0..1, "error": string | null, "lastCheck"}`
+
+`latest` is the newest release the last successful check found (a prerelease only when `current` is one), even when it is not newer; `available` is true only when it is newer than `current`. A failed check sets `state: "error"` with a readable `error`, `latest: null` and `available: false`. A failed install sets `state: "error"` but keeps `available: true`, so the banner offers "Try again". `skipped` does not change `available` (installing a skipped version still works). `lastCheck` is `settings.json` `lastUpdateCheck`, written after every check, failed or not.
 
 Client flow: show a banner when `available && !skipped`. On install, poll `/api/update` every 500 ms. When `state == "installing"`, show "Updating Story Studio…" and poll `/api/info` every second until `appVersion` changes, then `location.reload()`.
 
@@ -135,6 +138,24 @@ If the folder has `editor-data.js` but no `story-project.json`, use its `seed` a
   - `StoryStudio-Setup-X.Y.Z.exe`: Inno Setup installer.
   - `latest.json`: `{"version", "installer": "<asset name>", "sha256", "size", "notes", "publishedAt"}`.
   - `latest.json.sig`: base64 Ed25519 signature of the exact `latest.json` bytes.
-- The app fetches `https://github.com/soenderby/story-studio/releases/latest/download/latest.json` and `.sig`. That address is a plain redirect to the file, not the rate-limited API. The app verifies the signature with the public key embedded in `story_studio/update_key.py`, compares semver, then downloads `https://github.com/soenderby/story-studio/releases/download/vX.Y.Z/<installer>` and checks `size` and `sha256` before running it.
-- Install: `"<installer>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH`. The installer closes the running app (`/api/quit` with the token from `instance.json` in `STORY_STUDIO_HOME` or `%APPDATA%\Story Studio`, then waits up to 5 s for its `pid`; falling back to the Restart Manager), replaces the install dir and relaunches `StoryStudio.exe --no-browser` (open tabs reload by themselves). See [packaging/README.md](../packaging/README.md).
-- The private signing key exists only as the GitHub Actions secret `UPDATE_SIGNING_KEY`. It is never committed.
+- Versions are semver `X.Y.Z` or `X.Y.Z-<prerelease>` (no `+build` metadata), and the tag is always `v` + `version`. A prerelease is published as a GitHub *prerelease*, so `releases/latest` never points at it and installed apps are never offered one.
+- `latest.json` must be UTF-8 JSON, at most 64 KiB, an object without duplicate keys. All six fields are required: `version` a semver string (`X.Y.Z`, optional `-prerelease` and `+build`, no leading zeros, at most 64 characters); `installer` a plain file name matching `[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.exe`; `sha256` 64 *lowercase* hex digits; `size` a JSON integer, 1 byte to 512 MiB; `notes` a string (markdown, may be empty, at most 100 000 characters); `publishedAt` an ISO 8601 time such as `2026-10-31T12:00:00Z`. Other fields are ignored. Anything else fails the check.
+- `latest.json` bytes (phase 5, `scripts/release_tool.py manifest`): UTF-8 without BOM, keys in exactly this order, 2-space indent, non-ASCII characters unescaped, LF line ends, one trailing newline. Fields:
+  - `version`: string.
+  - `installer`: string, always `StoryStudio-Setup-<version>.exe`.
+  - `sha256`: 64 lowercase hex digits.
+  - `size`: integer, in bytes.
+  - `notes`: markdown string, that version's `CHANGELOG.md` section without its heading, LF line ends.
+  - `publishedAt`: UTC `YYYY-MM-DDTHH:MM:SSZ`, the time the manifest was signed.
+
+  The updater accepts at most 64 KiB of `latest.json`, 100,000 characters of `notes`, a `size` from 1 byte to 512 MiB, and an `installer` matching `[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.exe`. The release workflow refuses to publish anything beyond these limits. Verify the signature over the bytes as downloaded, before parsing them.
+- `latest.json.sig` is at most 1 KiB: standard base64 (with padding) of the raw 64-byte Ed25519 signature (RFC 8032, pure Ed25519, not Ed25519ph) over the exact bytes of `latest.json` as served. Surrounding whitespace, such as a trailing newline, is ignored.
+- `latest.json.sig` as the release workflow writes it: standard base64 (with padding) of the 64-byte signature, 88 characters on one line with no trailing newline. Strip surrounding whitespace before decoding anyway.
+- The release workflow signs only with the key that installed apps verify with (`update_key.py` as of the latest published release), and it checks the signature before publishing. See [RELEASING.md](RELEASING.md).
+- The app fetches `https://github.com/soenderby/story-studio/releases/latest/download/latest.json` and `.sig`. That address is a plain redirect to the file, not the rate-limited API. It verifies the signature with the public key embedded in `story_studio/update_key.py` *before* parsing the manifest, validates it, compares semver (never a downgrade; a prerelease is only offered to a prerelease), then downloads `https://github.com/soenderby/story-studio/releases/download/v<version>/<installer>` to `updates/<installer>.part`, hashing as it goes. Only when `size` and `sha256` match is it renamed to `updates/<installer>` and run; otherwise it is deleted and nothing is run.
+- HTTPS only (redirects too), through the system or environment proxy, 15 s timeout per manifest request, 60 s without data during the download. Env `STORY_STUDIO_UPDATE_URL` (tests, end-to-end runs) replaces the base address: `latest.json`, `latest.json.sig` and the installer are all fetched from `<STORY_STUDIO_UPDATE_URL>/<name>`, plain HTTP allowed only for `127.0.0.1`/`localhost`, which never go through a proxy. The signature is still checked against the embedded key.
+- Automatic checks, when `settings.json` `checkUpdates` is true: about 10 s after start, then whenever 24 h have passed since `lastUpdateCheck` (so restarts do not check again), and 1 h after a failed check. They run on a daemon thread that stops with the app. `POST /api/update/check` and the tray's "Check for updates" always check. A check while an update is being installed only reports the state.
+- Install: `"updates\<installer>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH /LOG="updates\install-<version>.log"`, started detached (it outlives the app). Right before starting it, the updater takes every story's save lock, so no save is in flight (saves are synchronous; it gives up with an error if a save takes over 30 s), then sets `state: "installing"`. The installer closes the running app (`/api/quit` with the token from `instance.json` in `STORY_STUDIO_HOME` or `%APPDATA%\Story Studio`, then waits up to 5 s for its `pid`; falling back to the Restart Manager), replaces the install dir and relaunches `StoryStudio.exe --no-browser` (open tabs reload by themselves). If the installer exits with an error while the app still runs (or exits successfully but the app is still running 20 s later), `state` becomes `"error"`, naming the log. See [packaging/README.md](../packaging/README.md).
+- Updates never touch app data (other than `settings.json` `lastUpdateCheck`/`skippedVersion` and `updates/`) or any story folder.
+- Quitting during the download or verification abandons it and nothing is installed. The partial `updates/<installer>.part` is deleted right away, or at the next start if the app stopped first, and the next check offers the release again. Once `state` is `"installing"` the installer runs on its own; quitting then changes nothing.
+- The private signing key exists only as the GitHub Actions secret `UPDATE_SIGNING_KEY` and in the maintainer's offline backup. It is never committed.

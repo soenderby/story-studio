@@ -503,7 +503,9 @@ class LegacyMigrationTest(ServerTest):
         self.assertEqual((added['title'], added['chapters']), ('Seedless', 1))
 
 
-class UpdateStubTest(ServerTest):
+class UpdateEndpointTest(ServerTest):
+    """The endpoints against the updater's fetch seam; tests/test_updates.py covers the updater itself."""
+
     def test_state_check_skip_and_install(self):
         state = self.get('/api/update')
         self.assertEqual({key: state[key] for key in ['current', 'latest', 'available', 'skipped', 'state', 'progress', 'error']},
@@ -512,6 +514,7 @@ class UpdateStubTest(ServerTest):
         self.assertEqual(set(state), {'current', 'latest', 'available', 'skipped', 'notes', 'publishedAt', 'state',
                                       'progress', 'error', 'lastCheck'})
         self.assertIsNone(state['lastCheck'])
+        self.server.updater.fetch = lambda: None
         checked = self.post('/api/update/check')
         self.assertIsNotNone(checked['lastCheck'])
         self.assertEqual(self.get('/api/update')['lastCheck'], checked['lastCheck'])
@@ -519,7 +522,9 @@ class UpdateStubTest(ServerTest):
         self.assertEqual(registry.Settings(self.home).get('skippedVersion'), '0.3.0')
         for bad in [{}, {'version': 3}, {'version': 'latest'}]:
             self.post('/api/update/skip', bad, status=400)
-        self.assertIn('error', self.post('/api/update/install', status=501))
+        self.assertIn('Windows', self.post('/api/update/install', status=501)['error'])  # Not the packaged exe.
+        self.server.updater.packaged = True
+        self.assertIn('No update', self.post('/api/update/install', status=409)['error'])
 
     def test_failed_check_reports_an_error_state(self):
         def offline():

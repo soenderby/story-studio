@@ -1,0 +1,339 @@
+# Builds, signs and publishes a release. See docs/RELEASING.md.
+#
+#   push tag vX.Y.Z[-pre]           build -> sign -> publish the GitHub release
+#   Run workflow, dry_run = true    build -> sign -> upload the files as a workflow artifact only
+#   Run workflow on a tag, dry_run = false
+#                                   same as the tag push (re-publish after a failed run)
+#
+# Jobs are split so that each secret meets as little code as possible:
+#   build    windows, contents: read. Runs the tests and the third-party build tools. No secrets.
+#   sign     ubuntu, contents: read. The only job that sees UPDATE_SIGNING_KEY. Runs no third-party
+#            code: Python standard library and OpenSSL. Verifies the signature against update_key.py.
+#   publish  ubuntu, contents: write. Only on publishing runs. Uploads the verified files.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: build, sign and verify, then upload the files as a workflow artifact. Publishes nothing.'
+        type: boolean
+        default: true
+      version:
+        description: 'Dry runs only: simulate releasing this version (applies the release edits to version.py and CHANGELOG.md inside the job, commits nothing). Empty: use version.py as it is.'
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Inno Setup 6, pinned. The sha256 is the digest GitHub lists for the jrsoftware/issrc release asset.
+  INNO_VERSION: '6.7.4'
+  INNO_SHA256: 'a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c'
+
+jobs:
+  build:
+    name: Build installer
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 40
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      publish: ${{ steps.meta.outputs.publish }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # to check that a tag is on main
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Resolve version and mode
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SIMULATE: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fail([string]$Message) { Write-Output "::error::$Message"; exit 1 }
+          $publish = $env:EVENT -eq 'push' -or ($env:EVENT -eq 'workflow_dispatch' -and $env:DRY_RUN -eq 'false')
+          if ($publish -and $env:REF_TYPE -ne 'tag') {
+            Fail "Publishing needs a tag ref (got $env:REF_TYPE '$env:REF_NAME'). On a branch, use dry_run."
+          }
+          if ($env:SIMULATE) {
+            if ($publish) { Fail 'The version input is only for dry runs.' }
+            python -B scripts/release_tool.py prepare $env:SIMULATE
+            if ($LASTEXITCODE) { Fail "Cannot simulate releasing $env:SIMULATE (see above)." }
+          }
+          $version = "$(python -B scripts/release_tool.py current)".Trim()
+          python -B scripts/release_tool.py check $version
+          if ($LASTEXITCODE) { Fail "src/story_studio/version.py has an invalid version '$version'." }
+          if ($env:REF_TYPE -eq 'tag' -and -not $env:SIMULATE -and $env:REF_NAME -ne "v$version") {
+            Fail "Tag $env:REF_NAME does not match __version__ '$version' in src/story_studio/version.py (expected v$version)."
+          }
+          python -B scripts/release_tool.py notes $version --out release-notes.md
+          if ($LASTEXITCODE) {
+            Fail "CHANGELOG.md needs a '## $version' section with entries. To dry-run before cutting a release, set the version input."
+          }
+          if ($publish) {
+            git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+            if ($LASTEXITCODE) { Fail "Tag $env:REF_NAME ($env:GITHUB_SHA) is not on main." }
+          }
+          $prerelease = if ($version.Contains('-')) { 'true' } else { 'false' }
+          $mode = if ($publish) { 'PUBLISH' } else { 'DRY RUN (publishes nothing)' }
+          Write-Output "Story Studio $version, prerelease: $prerelease, mode: $mode"
+          Write-Output '--- release notes ---'
+          Get-Content -Raw -Encoding utf8 release-notes.md
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version", "prerelease=$prerelease", "publish=$($publish.ToString().ToLower())"
+          Add-Content -Path $env:GITHUB_ENV -Value "VERSION=$version"
+
+      - name: Unit tests
+        run: python -B -m unittest discover -s tests
+
+      # The runner image may ship some Inno Setup 6, but its binaries carry no version number
+      # (0.0.0.0), so it cannot be checked against the pin. Install the pinned one privately (~10 s).
+      - name: Inno Setup ${{ env.INNO_VERSION }} (pinned, sha256-checked)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'is-' + ($env:INNO_VERSION -replace '\.', '_')
+          $url = "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$($env:INNO_VERSION).exe"
+          $setup = Join-Path $env:RUNNER_TEMP "innosetup-$($env:INNO_VERSION).exe"
+          Write-Output "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $setup
+          $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup download has sha256 $hash, pinned $($env:INNO_SHA256)" }
+          $dir = Join-Path $env:RUNNER_TEMP 'InnoSetup6'
+          $p = Start-Process $setup -Wait -PassThru -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER', '/NOICONS', "/DIR=$dir")
+          if ($p.ExitCode -ne 0) { throw "Inno Setup install failed with exit code $($p.ExitCode)" }
+          $iscc = Join-Path $dir 'ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found in $dir" }
+          Write-Output "Using $iscc (sha256 of the setup verified: $hash)"
+          Add-Content -Path $env:GITHUB_ENV -Value "ISCC=$iscc"
+
+      - name: Build (packaging/build.ps1)
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build.ps1 -Python "$env:pythonLocation\python.exe"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force dist-release | Out-Null
+          Copy-Item "packaging\Output\StoryStudio-Setup-$env:VERSION.exe", release-notes.md dist-release\
+
+      - name: Smoke test the installer (packaging/smoke-test.ps1)
+        run: |
+          $installer = (Resolve-Path "dist-release\StoryStudio-Setup-$env:VERSION.exe").Path
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\smoke-test.ps1 -Installer $installer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: installer
+          path: dist-release/
+          if-no-files-found: error
+          retention-days: 3
+
+  sign:
+    name: Write, sign and verify latest.json
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: installer
+          path: dist
+
+      - name: Write latest.json
+        run: |
+          set -euo pipefail
+          mkdir release
+          cp "dist/StoryStudio-Setup-$VERSION.exe" release/
+          python3 -B scripts/release_tool.py manifest --version "$VERSION" \
+            --installer "release/StoryStudio-Setup-$VERSION.exe" \
+            --notes-file dist/release-notes.md --out release/latest.json
+          cat release/latest.json
+
+      - name: Find the key installed apps verify with
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEY_ROTATION_RELEASE: ${{ vars.KEY_ROTATION_RELEASE }}
+        run: |
+          set -euo pipefail
+          # Installed apps verify with the update_key.py of the version they run, which came from
+          # releases/latest. So sign for the key in the latest published release (or, before the
+          # first release, the current file). See docs/RELEASING.md, "Rotating the key".
+          installed="$RUNNER_TEMP/installed_update_key.py"
+          if prev="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>"$RUNNER_TEMP/gh.err")"; then
+            git fetch --quiet --no-tags --depth=1 origin "refs/tags/$prev:refs/tags/$prev"
+            git show "$prev:src/story_studio/update_key.py" > "$installed"
+            echo "Latest published release: $prev"
+          elif grep -q 'HTTP 404' "$RUNNER_TEMP/gh.err"; then
+            prev='(none yet)'
+            cp src/story_studio/update_key.py "$installed"
+            echo "No published release yet: installed apps' key = the current update_key.py"
+          else
+            cat "$RUNNER_TEMP/gh.err" >&2
+            exit 1
+          fi
+          old="$(python3 -B scripts/release_tool.py public-key --format raw --key-file "$installed")"
+          new="$(python3 -B scripts/release_tool.py public-key --format raw)"
+          echo "Installed apps verify with: $old"
+          echo "This build embeds:          $new"
+          if [ "$old" != "$new" ]; then
+            if [ "${KEY_ROTATION_RELEASE:-}" = "v$VERSION" ]; then
+              echo "::warning::Key rotation bridge release: signed for the key in $prev, embeds the new key."
+            else
+              echo "::error::src/story_studio/update_key.py differs from release $prev. Installs of this version would reject every update signed with the old key. For a deliberate key rotation, set the repository variable KEY_ROTATION_RELEASE=v$VERSION (docs/RELEASING.md)."
+              exit 1
+            fi
+          fi
+          python3 -B scripts/release_tool.py public-key --format der --key-file "$installed" --out "$RUNNER_TEMP/expected.der"
+          python3 -B scripts/release_tool.py public-key --format pem --key-file "$installed" --out "$RUNNER_TEMP/expected.pem"
+
+      - name: Sign latest.json (Ed25519)
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+            echo "::error::The UPDATE_SIGNING_KEY secret is empty or not available to this run."
+            exit 1
+          fi
+          key="$(mktemp -p "$RUNNER_TEMP" key.XXXXXX)"  # mode 0600; deleted when this step ends
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+          # A wrong or rotated secret must never sign: installed apps would reject the update.
+          openssl pkey -in "$key" -pubout -outform DER -out "$RUNNER_TEMP/signer.der"
+          if ! cmp -s "$RUNNER_TEMP/signer.der" "$RUNNER_TEMP/expected.der"; then
+            echo "::error::UPDATE_SIGNING_KEY does not match the public key installed apps verify with (previous step). Nothing was signed."
+            exit 1
+          fi
+          openssl pkeyutl -sign -inkey "$key" -rawin -in release/latest.json -out "$RUNNER_TEMP/sig.bin"
+          base64 -w0 "$RUNNER_TEMP/sig.bin" > release/latest.json.sig
+          echo "Signed with the key installed apps verify with"
+
+      - name: Verify the signature (update_key.py's key) and the manifest (installer size and sha256)
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/expected.pem"
+          if [ "$(wc -l < release/latest.json.sig)" -ne 0 ]; then echo "::error::latest.json.sig is not one line"; exit 1; fi
+          base64 -d release/latest.json.sig > "$RUNNER_TEMP/verify.bin"
+          test "$(stat -c %s "$RUNNER_TEMP/verify.bin")" -eq 64
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/expected.pem" -rawin \
+            -in release/latest.json -sigfile "$RUNNER_TEMP/verify.bin"
+          python3 -B scripts/release_tool.py verify-manifest release/latest.json \
+            --installer "release/StoryStudio-Setup-$VERSION.exe" --version "$VERSION"
+          (cd release && ls -l && sha256sum -- *)
+          {
+            echo "### Story Studio $VERSION"
+            echo
+            echo "Publish: ${{ needs.build.outputs.publish }}, prerelease: ${{ needs.build.outputs.prerelease }}. Signature verified with the key installed apps hold (update_key.py)."
+            echo
+            echo '```json'
+            cat release/latest.json
+            echo '```'
+            echo
+            echo '```'
+            (cd release && sha256sum -- *)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: release-v${{ needs.build.outputs.version }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    needs: [build, sign]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: release-v${{ needs.build.outputs.version }}
+          path: release
+
+      - name: Create or complete the release, then publish it
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          title="Story Studio $VERSION"
+          files=("release/StoryStudio-Setup-$VERSION.exe" release/latest.json release/latest.json.sig)
+          jq -j .notes release/latest.json > notes.md
+          pre=(); latest=(--latest)
+          if [ "$PRERELEASE" = true ]; then pre=(--prerelease); latest=(--latest=false); fi
+          # Assets go to a draft first: releases/latest never points at a half-uploaded release.
+          if ! state="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then state=missing; fi
+          case "$state" in
+            missing)
+              gh release create "$tag" --verify-tag --draft --title "$title" --notes-file notes.md "${pre[@]}" "${files[@]}"
+              ;;
+            true)
+              echo "::warning::A draft release for $tag exists (an earlier run stopped halfway). Replacing its assets."
+              gh release upload "$tag" "${files[@]}" --clobber
+              gh release edit "$tag" --title "$title" --notes-file notes.md --prerelease="$PRERELEASE"
+              ;;
+            *)
+              echo "::error::Release $tag is already published. Nothing changed. See docs/RELEASING.md, 'If a release fails'."
+              exit 1
+              ;;
+          esac
+          gh release edit "$tag" --draft=false "${latest[@]}"
+
+      - name: Check the published files
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          mkdir check
+          gh release download "$tag" --dir check
+          for f in "StoryStudio-Setup-$VERSION.exe" latest.json latest.json.sig; do
+            cmp "release/$f" "check/$f"
+          done
+          echo "The release's three assets match the signed files."
+          gh release view "$tag" --json url,isDraft,isPrerelease,tagName --jq '"\(.url) draft=\(.isDraft) prerelease=\(.isPrerelease)"'
+          if [ "$PRERELEASE" != true ]; then
+            # What installed apps fetch. The CDN may lag a little, so retry before warning.
+            for _ in 1 2 3 4 5 6; do
+              if curl -fsSL "https://github.com/$GH_REPO/releases/latest/download/latest.json" -o check/served.json \
+                 && cmp -s check/served.json release/latest.json; then
+                echo "releases/latest/download/latest.json serves $VERSION"; exit 0
+              fi
+              sleep 10
+            done
+            echo "::warning::releases/latest/download/latest.json does not serve $VERSION yet. Check it by hand."
+          fi

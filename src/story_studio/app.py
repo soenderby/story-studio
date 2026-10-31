@@ -109,6 +109,7 @@ class AppHandle:
         atomic_write(self.home / 'instance.json', encode(self.instance))
         self._thread = threading.Thread(target=server.serve_forever, name='story-studio-server', daemon=True)
         self._thread.start()
+        server.updater.start()  # Tidies updates/, then checks for updates automatically when settings allow.
         log.info('Story Studio %s serving %s (app data %s)', __version__, self.url, self.home)
 
     def shutdown(self):
@@ -116,6 +117,7 @@ class AppHandle:
             if self._closing:
                 return
             self._closing = True
+        self.server.updater.stop()
         self.server.shutdown()
         self.server.server_close()
         if read_instance(self.home).get('token') == self.server.token:  # Never remove a newer instance's file.

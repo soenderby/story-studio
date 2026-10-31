@@ -1,4 +1,5 @@
 """One story folder: project validation, live media discovery, atomic saving and legacy migration."""
+from contextlib import contextmanager
 import hashlib
 import json
 import mimetypes
@@ -223,6 +224,27 @@ def folder_lock(root):
     """One lock per folder, shared by every Studio for it, so a re-add or migration never races a save."""
     with LOCKS_GUARD:
         return LOCKS.setdefault(directory_key(root), threading.Lock())
+
+
+@contextmanager
+def saves_paused(timeout=30.0):
+    """Hold every story folder's lock, so no save is in flight inside the block (saves are synchronous).
+
+    Used by the updater right before it starts the installer. Raises TimeoutError if a save does
+    not finish within `timeout` seconds.
+    """
+    with LOCKS_GUARD:
+        locks = list(LOCKS.values())
+    taken = []
+    try:
+        for lock in locks:
+            if not lock.acquire(timeout=timeout):
+                raise TimeoutError('A story is still being saved.')
+            taken.append(lock)
+        yield
+    finally:
+        for lock in reversed(taken):
+            lock.release()
 
 
 class Studio:

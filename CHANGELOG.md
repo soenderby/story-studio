@@ -1,15 +1,19 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## Unreleased
 
-- Repository created from the single-folder editor. Python package `story_studio` with the web editor under `web/`.
-- The server is separated from story data: `--story <folder>` selects the story folder, and new stories start blank.
-- Image descriptions from an older single-story folder's `editor-data.js` are still read when present.
-- Video support: MP4, M4V, MOV, WebM and OGV, with Range streaming, thumbnails and hover-to-play.
-- Multiple stories: an "All stories" home page to create stories, add existing folders (native folder dialog), remove them from the list (files are never deleted), and locate moved folders. Each story opens at `/s/<id>/`.
-- App data lives in `%APPDATA%\Story Studio` (story list, settings, logs), separate from the program and from story folders.
-- One instance per user, a stable port, and a clean handover when a newer version starts.
-- Browser recovery copies and thumbnails are kept per story. A recovery copy from the old single-story editor is adopted by the matching story.
-- Image descriptions from a pre-0.2 story folder's `editor-data.js` are migrated into the project, after a `story-project.pre-migration.json` backup.
-- Update notifications UI (banner, release notes, install and restart, skip) ready for the updater.
-- Windows packaging: `StoryStudio.exe` (no console window, tray icon with Open / Check for updates / Quit) and a per-user Inno Setup installer that never removes app data or stories.
+The first installable release of Story Studio.
+
+### New
+
+- **Install it like any Windows program.** No Python or other setup needed. Story Studio runs quietly in the tray (Open · Check for updates · Quit) and opens in your browser.
+- **Several stories in one place.** The new *All stories* page lets you start a story in a folder you choose, add folders you already have, and reopen any story. Removing a story from the list never deletes its files.
+- **Automatic updates.** Story Studio checks for new versions once a day and shows what's new. *Install and restart* updates it in place; your stories and settings are never touched. Every update is signed and verified before it runs.
+- **Videos.** MP4, M4V, MOV, WebM and OGV files work everywhere pictures do: in the library, the story, picture groups, Read mode and exported HTML. In the editor they play silently while you hover over them.
+
+### Moving from the earlier single-folder editor
+
+- Add your existing story folder with *Add existing folder…*. Image descriptions and scenes from the old editor are carried over automatically, after a backup copy (`story-project.pre-migration.json`) is written.
+- An unsaved recovery copy kept by the old editor in your browser is picked up by the matching story.
+- Close the old editor before starting Story Studio for the first time.
+

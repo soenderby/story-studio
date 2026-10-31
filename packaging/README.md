@@ -26,6 +26,8 @@ The version comes from `src/story_studio/version.py` and must start with `X.Y.Z`
 | `icon.ico` | Generated, committed |
 | `installer.iss` | Inno Setup script. Needs `/DAppVersion=X.Y.Z` (and optionally `/DAppNumericVersion=`) |
 | `smoke-test.ps1` | Installs the newest `Output\` installer into a temp folder with its own `STORY_STUDIO_HOME` (port 8793), checks serving, no window, every shutdown path (no error dialog, clean log), `/RELAUNCH`, the Restart Manager fallback and uninstall, then cleans up. Exit code 1 on any failure |
+| `e2e-update.ps1` | End-to-end test of the in-app updater: builds two versions (default 0.2.0 and 0.2.1) from a temporary copy of the source that trusts a throwaway test key, serves a fake signed release on 127.0.0.1 (a free port), installs the older one into a temp folder (own `STORY_STUDIO_HOME`, port 8796), saves an edit to a test story, checks that a tampered installer is refused, then updates from the app and checks that it restarts as the new version with the story and app data untouched. Uninstalls and cleans up; `-KeepBuild` keeps the builds for the next run. Exit code 1 on any failure |
+| `e2e_update_helper.py` | Its helpers: test key, signed `latest.json`, test story (uses `tests/signing.py`) |
 
 ## The app
 
@@ -52,7 +54,8 @@ Command line: Inno's standard switches (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTAR
 /TASKS=desktopicon`) plus:
 
 - `/RELAUNCH`: start `StoryStudio.exe --no-browser` after the install, also when silent. The
-  updater runs `StoryStudio-Setup-X.Y.Z.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH`.
+  updater runs `StoryStudio-Setup-X.Y.Z.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH
+  /LOG=<app data>\updates\install-X.Y.Z.log` (see docs/API.md, "Updates and releases").
   Without it, a silent install does not start the app; an interactive one offers "Launch Story Studio".
 
 Closing the running app before files are replaced (`[Code]`, `PrepareToInstall`, and before

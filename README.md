@@ -30,4 +30,4 @@ Tests only use temporary folders and free ports.
 
 - [User guide](docs/USER-GUIDE.md)
 - [Plan](docs/PLAN.md) and [architecture / API contract](docs/API.md)
-- [Changelog](CHANGELOG.md)
+- [Changelog](CHANGELOG.md) and [how to release](docs/RELEASING.md)
