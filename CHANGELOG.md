@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-10-31)
+
 The first installable release of Story Studio.
 
 ### New
@@ -16,4 +18,3 @@ The first installable release of Story Studio.
 - Add your existing story folder with *Add existing folder…*. Image descriptions and scenes from the old editor are carried over automatically, after a backup copy (`story-project.pre-migration.json`) is written.
 - An unsaved recovery copy kept by the old editor in your browser is picked up by the matching story.
 - Close the old editor before starting Story Studio for the first time.
-
