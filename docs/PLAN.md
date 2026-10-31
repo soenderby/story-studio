@@ -97,7 +97,7 @@ Each phase ends with its tests passing and a short entry in `CHANGELOG.md`. Ever
 - [x] Integration: phases 1–3 merged, 69 tests passing, combined app checked in a browser against the real server
 - [x] Phase 4 — Updater
 - [x] Phase 5 — Release pipeline
-- [x] First release 0.2.0 (published 2026-10-31, (`scripts/release.ps1 0.2.0`, see [RELEASING.md](RELEASING.md))
+- [x] First release 0.2.0 (published 2026-10-31; see [RELEASING.md](RELEASING.md))
 - [ ] Phase 6 — End-to-end verification
 
 ## Open items carried forward
