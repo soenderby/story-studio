@@ -36,6 +36,31 @@ All app-data JSON is written with the existing `atomic_write`. An unreadable `st
 - Port 8765. If something else holds it, try 8766–8775 and save the chosen port in `settings.json`. Browser storage is per origin, so the port should stay stable.
 - Listens on 127.0.0.1 only. Every request checks `Host`. Every POST checks `Origin` (if present) and the `X-Story-Token` header (per-process token from `GET /api/stories` or `/s/<id>/api/bootstrap`).
 
+## Python entry points
+
+Phase 1 provides these. Phase 3 (tray, PyInstaller) and phase 4 (updater) build on them.
+
+```python
+# story_studio/paths.py
+def app_home() -> Path            # %APPDATA%\Story Studio, or STORY_STUDIO_HOME; created on first use
+WEB_DIR: Path                     # bundled web assets; correct both from source and inside PyInstaller
+
+# story_studio/app.py
+class AppHandle:
+    url: str                      # e.g. "http://127.0.0.1:8765/"
+    def shutdown(self) -> None    # stop serving, remove instance.json; safe to call twice
+    def wait(self) -> None        # block until shut down (by shutdown() or POST /api/quit)
+
+def start(open_browser: bool = True) -> AppHandle | None
+    # Single-instance logic above. Returns None when another instance was found
+    # (its home page has been opened instead). Serves on a background thread.
+
+def main() -> None                # CLI: python -m story_studio [--port N] [--no-browser] [--story FOLDER]
+                                  # --story registers that folder and opens it directly.
+```
+
+`story_studio/__main__.py` calls `app.main()`. The packaged `StoryStudio.exe` runs `story_studio.tray.main()`, which calls `start()`, shows the tray icon (Open Story Studio · Check for updates · Quit) and calls `shutdown()` on Quit. Without the tray libraries, `tray.main()` falls back to `app.main()`.
+
 ## HTTP API
 
 ### Global
