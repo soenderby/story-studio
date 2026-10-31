@@ -99,6 +99,11 @@ Each phase ends with its tests passing and a short entry in `CHANGELOG.md`. Ever
 - [x] Phase 5 — Release pipeline
 - [x] First release 0.2.0 (published 2026-10-31; see [RELEASING.md](RELEASING.md))
 - [ ] Phase 6 — End-to-end verification
+  - [x] Published 0.2.0 downloaded and verified with the app's own code (signature, size, SHA-256)
+  - [x] 0.2.0 installed on the maintainer's machine (per-user, Start-menu shortcut), serving on 8765
+  - [x] A pre-0.2 story folder added: project content unchanged, legacy descriptions migrated, pre-migration backup written
+  - [ ] Manual: folder dialog appears in front of the browser; tray icon; old browser recovery copy adopted
+  - [ ] First real in-place update (0.2.0 → next release) using the real signing key
 
 ## Open items carried forward
 
