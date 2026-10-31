@@ -26,3 +26,7 @@ dist/
 # Packaging build outputs (packaging/build.ps1)
 .venv-build/
 packaging/Output/
+
+# Signing keys must never be committed.
+*.pem
+*.key
