@@ -91,9 +91,16 @@ Each phase ends with its tests passing and a short entry in `CHANGELOG.md`. Ever
 ## Progress
 
 - [x] Phase 0 — Foundations (0.1.0)
-- [ ] Phase 1 — Multi-story server
-- [ ] Phase 2 — Front end
-- [ ] Phase 3 — Packaging
+- [x] Phase 1 — Multi-story server
+- [x] Phase 2 — Front end
+- [x] Phase 3 — Packaging
+- [x] Integration: phases 1–3 merged, 69 tests passing, combined app checked in a browser against the real server
 - [ ] Phase 4 — Updater
 - [ ] Phase 5 — Release pipeline
 - [ ] Phase 6 — End-to-end verification
+
+## Open items carried forward
+
+- The native folder dialog has only been exercised through a test double. Check on Windows that it appears in front of the browser (phase 6 at the latest).
+- Editor top bar is crowded below ~380 px width.
+- If a pre-0.2 editor still holds port 8765, the app uses a fallback port for that run only (not saved), so the old browser recovery copy can still be adopted later on 8765.

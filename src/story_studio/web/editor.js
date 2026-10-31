@@ -1,11 +1,15 @@
 'use strict';
 (() => {
   const DATA = window.STORY_EDITOR_DATA;
-  const KEY = 'illustrated-story-studio:v1';
-  const UI_KEY = KEY + ':ui';
+  const BASE_KEY = 'illustrated-story-studio:v1';
+  // Each story's recovery copy is namespaced by the story id from /s/<id>/. UI preferences and "Hide images" stay global.
+  // The file:// manual mode (and any page outside /s/<id>/) keeps the old un-namespaced key.
+  const storyId = decodeURIComponent(location.pathname.match(/^\/s\/([^/]+)\//)?.[1] || '');
+  const KEY = storyId ? BASE_KEY + ':' + storyId : BASE_KEY;
+  const UI_KEY = BASE_KEY + ':ui', HIDE_KEY = BASE_KEY + ':hide-images';
   const SIZES = ['small', 'medium', 'large', 'wide'];
   const LAYOUTS = ['row', 'grid'], MAX_GROUP = 12;
-  const SERVER_VERSION = 5; // story-server.py must accept and stream video files.
+  const SERVER_VERSION = 6; // Multi-story app: this editor runs under /s/<id>/ with relative API URLs.
   const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i;
   const VIDEO_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#2b302d"/><path d="M6 4.5v7l5.5-3.5z" fill="#fff"/></svg>');
   const SIZE_LABELS = {small:'S', medium:'M', large:'L', wide:'Wide'};
@@ -25,7 +29,7 @@
   let diskSavedVersion = '', libraryCards = [];
   const serverMode = location.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(location.hostname);
   let server = null, serverDirty = false, serverPending = 0, serverQueue = Promise.resolve(), imageSignature = '';
-  let polling = false;
+  let polling = false, reloadingForUpdate = false;
   // Editing-surface state (not part of the project).
   let view = 'chapter';            // 'chapter' or 'title'
   let caret = null;                // {chapter, block, pos}: last cursor position in a text block
@@ -72,7 +76,7 @@
 
   /* ---------- Server persistence (unchanged behaviour) ---------- */
   async function responseJSON(response) {
-    const body = await response.json();
+    const body = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(body.error || 'Local server request failed.'), {status:response.status});
     return body;
   }
@@ -84,7 +88,7 @@
       if (blocked || diskSavedVersion === payload) { serverPending--; return; }
       fileStatus('Saving automatically to story-project.json…', 'busy');
       try {
-        const result = await responseJSON(await fetch('/api/project', {
+        const result = await responseJSON(await fetch('api/project', {
           method:'POST', headers:{'Content-Type':'application/json', 'X-Story-Token':server.token},
           body:JSON.stringify({project:JSON.parse(payload), revision:server.revision}), signal:AbortSignal.timeout(10000)
         }));
@@ -99,7 +103,7 @@
           recovery('server-conflict', 'The project file changed in another tab, program or computer. Saving is paused to protect both versions. Download this tab’s recovery copy, then reload the saved project. You can import the recovery JSON if you want to replace it.', serialize());
         } else if (error.status === 403) {
           try {
-            const fresh = await responseJSON(await fetch('/api/bootstrap'));
+            const fresh = await responseJSON(await fetch('api/bootstrap'));
             if (fresh.revision !== server.revision) throw Error('The project changed while the server restarted.');
             server.token = fresh.token;
           } catch {
@@ -116,7 +120,7 @@
     if (polling || !server || blocked) return;
     polling = true;
     try {
-      const result = await responseJSON(await fetch('/api/images', {signal:AbortSignal.timeout(8000)}));
+      const result = await responseJSON(await fetch('api/images', {signal:AbortSignal.timeout(8000)}));
       if (result.signature !== imageSignature) {
         const before = new Set(DATA.images.map(image => image.file));
         DATA.images = result.images; imageSignature = result.signature; buildLibrary();
@@ -140,7 +144,7 @@
   }
   function isVideo(file) { return VIDEO_PATTERN.test(file); }
   function validate(raw) {
-    if (!raw || raw.format !== 'illustrated-story-project' || raw.version !== 1) throw Error('This is not a supported Story studio project (version 1).');
+    if (!raw || raw.format !== 'illustrated-story-project' || raw.version !== 1) throw Error('This is not a supported Story Studio project (version 1).');
     const text = (value, max = 2000000) => {
       if (typeof value !== 'string' || value.length > max) throw Error('The project contains invalid or oversized text.');
       return value;
@@ -233,7 +237,7 @@
     $('redo').disabled = blocked || !redoStack.length;
   }
   function saveBrowser() {
-    if (blocked) return false;
+    if (blocked || !project) return false;
     try {
       localStorage.setItem(KEY, JSON.stringify({project, writer, activeChapter, savedAt: new Date().toISOString(),
         pendingServer:serverMode && (serverDirty || diskSavedVersion !== serialize()), serverRevision:server?.revision}));
@@ -296,7 +300,7 @@
 
   /* ---------- Thumbnails: small JPEGs cached in IndexedDB ---------- */
   const thumbs = {db:null, urls:new Map(), waiting:[], running:0, observer:null};
-  function thumbKey(file) { return file + '|' + (metadata(file).stamp || ''); }
+  function thumbKey(file) { return (storyId ? storyId + '|' : '') + file + '|' + (metadata(file).stamp || ''); }
   function thumbDB() {
     thumbs.db ||= new Promise(resolve => {
       try {
@@ -421,7 +425,7 @@
     const words = wordCount(project.outline || '');
     $('outline-item-stats').textContent = words ? `${words.toLocaleString()} words` : 'Empty — plan the story here';
     $('outline-count').textContent = words ? `${words.toLocaleString()} words · saved automatically · private` : '';
-    document.title = 'Story studio — ' + (project.title || 'Untitled story');
+    document.title = 'Story Studio — ' + (project.title || 'Untitled story');
   }
   function gapHTML(index, count) {
     const end = index === count, active = target && target.chapter === activeChapter && target.index === index;
@@ -1231,9 +1235,9 @@
     document.querySelectorAll('[data-thumb-size]').forEach(button => button.addEventListener('click', () => { ui.thumb = button.dataset.thumbSize; saveUI(); renderLibraryLayout(); }));
     $('hide-thumbnails').addEventListener('change', event => {
       document.body.classList.toggle('hide-images', event.target.checked);
-      try { localStorage.setItem(KEY + ':hide-images', String(event.target.checked)); } catch {}
+      try { localStorage.setItem(HIDE_KEY, String(event.target.checked)); } catch {}
     });
-    try { $('hide-thumbnails').checked = localStorage.getItem(KEY + ':hide-images') === 'true'; document.body.classList.toggle('hide-images', $('hide-thumbnails').checked); } catch {}
+    try { $('hide-thumbnails').checked = localStorage.getItem(HIDE_KEY) === 'true'; document.body.classList.toggle('hide-images', $('hide-thumbnails').checked); } catch {}
     $('library-resizer').addEventListener('pointerdown', event => {
       event.preventDefault();
       const resizer = event.currentTarget; resizer.setPointerCapture(event.pointerId); resizer.classList.add('active');
@@ -1353,6 +1357,7 @@
     $('undo').addEventListener('click', () => stepHistory(undoStack, redoStack));
     $('redo').addEventListener('click', () => stepHistory(redoStack, undoStack));
     document.addEventListener('keydown', event => {
+      if (!project) return; // Nothing loaded, e.g. the story's folder is missing.
       const mod = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
       if (mod && key === 's') {
         event.preventDefault();
@@ -1401,7 +1406,7 @@
       if (blocked) { notify('Resolve the recovery warning before linking a file.', true); return; }
       if (!window.showSaveFilePicker) { notify('Direct file autosave is not available in this browser. Use Download backup regularly, or open the editor in Chrome / Edge.', true); return; }
       try {
-        const handle = await window.showSaveFilePicker({suggestedName:projectName('-project.json'), types:[{description:'Story studio project', accept:{'application/json':['.json']}}]});
+        const handle = await window.showSaveFilePicker({suggestedName:projectName('-project.json'), types:[{description:'Story Studio project', accept:{'application/json':['.json']}}]});
         if (!/\.json$/i.test(handle.name)) throw Error('Choose a .json project file, not an image or HTML file.');
         await flushDisk(); fileHandle = handle; diskSavedVersion = ''; await queueDiskSave();
         if (fileHandle) notify('Disk autosave is linked to ' + handle.name + '. Reopen that project file with Open project next time to reconnect.');
@@ -1410,7 +1415,7 @@
     $('open-project').addEventListener('click', async () => {
       if (serverMode || !window.showOpenFilePicker) { $('import-file').click(); return; }
       try {
-        const [handle] = await window.showOpenFilePicker({types:[{description:'Story studio project',accept:{'application/json':['.json']}}], multiple:false});
+        const [handle] = await window.showOpenFilePicker({types:[{description:'Story Studio project',accept:{'application/json':['.json']}}], multiple:false});
         let writableHandle = handle;
         if (handle.requestPermission && await handle.requestPermission({mode:'readwrite'}) !== 'granted') writableHandle = null;
         const file = await handle.getFile(); if (file.size > 10000000) throw Error('Project files must be smaller than 10 MB.');
@@ -1438,6 +1443,7 @@
       blocked = false; $('workspace').disabled = false; $('recovery').hidden = true; changed();
     });
     window.addEventListener('storage', event => {
+      if (event.key === HIDE_KEY) { $('hide-thumbnails').checked = event.newValue === 'true'; document.body.classList.toggle('hide-images', $('hide-thumbnails').checked); return; }
       if (serverMode) return; // The server's revision check arbitrates disk writes.
       if (event.key === KEY && event.newValue) {
         try { if (JSON.parse(event.newValue).writer === writer) return; } catch {}
@@ -1446,6 +1452,7 @@
     });
     window.addEventListener('beforeunload', event => {
       saveBrowser();
+      if (reloadingForUpdate || !project) return; // The recovery copy above carries any unsaved change across the update.
       if ((serverMode && !blocked && (serverPending || serverDirty)) || (!browserSaved && diskSavedVersion !== serialize()) || (fileHandle && (diskPending || diskSavedVersion !== serialize()))) { event.preventDefault(); event.returnValue = ''; }
     });
     const media = target => target.tagName === 'IMG' || target.tagName === 'VIDEO';
@@ -1458,32 +1465,60 @@
       const parent = event.target.parentElement;
       if (!parent || parent.querySelector('.missing-image')) return;
       const warning = document.createElement('div'); warning.className = 'missing-image';
-      warning.textContent = event.target.tagName === 'VIDEO' ? 'Video unavailable or in a format this browser cannot play (MP4/H.264 and WebM work best).' : 'Image unavailable. Keep its original file beside editor.html.';
+      warning.textContent = event.target.tagName === 'VIDEO' ? 'Video unavailable or in a format this browser cannot play (MP4/H.264 and WebM work best).' : serverMode ? 'Image unavailable. Keep its original file in this story’s folder.' : 'Image unavailable. Keep its original file beside editor.html.';
       parent.append(warning);
     }, true);
     document.addEventListener('mouseenter', event => { if (event.target.matches?.('video[data-hover-play]')) event.target.play().catch(() => {}); }, true);
     document.addEventListener('mouseleave', event => { if (event.target.matches?.('video[data-hover-play]')) event.target.pause(); }, true);
   }
 
+  // Legacy adoption: the single-story editor kept its recovery copy under the un-namespaced key. Copy it
+  // over (raw, so nothing is lost even if loading it pauses saving) when it belongs to this project.
+  function adoptLegacyRecovery(projectId) {
+    if (KEY === BASE_KEY) return;
+    try {
+      const raw = localStorage.getItem(BASE_KEY);
+      if (localStorage.getItem(KEY) !== null || !raw || JSON.parse(raw)?.project?.id !== projectId) return;
+      localStorage.setItem(KEY, raw); localStorage.removeItem(BASE_KEY);
+    } catch { /* Unreadable legacy data stays where it is. */ }
+  }
+  function startUpdates() {
+    window.StoryUpdate?.start({banner:$('update-banner'), token:() => server?.token, setToken:value => { if (server) server.token = value; },
+      notify, beforeInstall:() => { saveBrowser(); return flushDisk(); }, beforeReload:() => { saveBrowser(); reloadingForUpdate = true; }});
+  }
+  function showMissing() {
+    blocked = true; clearTimeout(diskTimer);
+    $('workspace').hidden = true; $('missing-story').hidden = false;
+    document.querySelector('.actions').hidden = true; $('toggle-chapters').hidden = true; $('topbar-title').hidden = true;
+    document.title = 'Story Studio — story not found';
+    let raw = null;
+    try { raw = localStorage.getItem(KEY); } catch {}
+    $('missing-recovery').hidden = $('missing-recovery-note').hidden = !raw;
+    $('missing-recovery').addEventListener('click', () => download('story-studio-recovery.json', raw, 'application/json'));
+  }
   async function loadInitial() {
     if (window.innerWidth <= 1100) ui.library = false;
     if (window.innerWidth <= 760) ui.chapters = false;
     renderLibraryLayout();
+    const icon = document.querySelector('.brand-icon'), showIcon = () => { icon.hidden = !icon.naturalWidth; };
+    icon.addEventListener('load', showIcon); if (icon.complete) showIcon(); // icon.svg may be absent in development.
+    if (serverMode && storyId) { $('all-stories').hidden = false; $('brand').href = '/'; $('brand').title = 'All stories'; }
     if (!serverMode) {
-      $('folder-status').textContent = 'Manual mode — use the Start Story Studio launcher for automatic folder watching and saving.';
+      $('folder-status').textContent = 'Manual mode — open the story from the Story Studio app for automatic folder watching and saving.';
       fileStatus('No project file linked — browser autosave only', 'idle');
       loadBrowserInitial(); return;
     }
     $('workspace').disabled = true;
     $('link-file').hidden = true; $('add-image-files').hidden = true;
     $('open-project').textContent = 'Import project…';
-    $('help-content').innerHTML = '<p><strong>Everything saves automatically.</strong> The local server creates and updates <code>story-project.json</code> beside your images. Reopening the launcher resumes that file without selecting or reconnecting anything. The dot in the top bar turns green once a change is on disk.</p><p>New top-level image and video files appear within a few seconds. Directories, symbolic links and ZIP archives are not scanned. Image files are referenced, never copied or uploaded. Image descriptions you write are stored in the project, not in the image files.</p><p>Changes are saved shortly after you stop typing. A browser recovery copy is kept too; if the server stops, leave the page open and restart the launcher. Saving retries automatically.</p><p><code>story-project.json.bak</code> holds the previous saved version. Dropbox can sync these files, but do not edit on two computers simultaneously. Conflicting file changes pause saving instead of overwriting.</p><p><strong>Previous browser-only edits:</strong> open the old file-based editor, download a JSON backup, then import it here once.</p><p>Download backup exports editable JSON, including private notes. Export story HTML makes a read-only story without notes; save it beside the images. Nothing is sent to an internet service.</p>';
+    $('help-content').innerHTML = '<p><strong>Everything saves automatically.</strong> Story Studio creates and updates <code>story-project.json</code> in this story’s folder, beside your images. Opening the story again from the Story Studio home page resumes that file without selecting or reconnecting anything. The dot in the top bar turns green once a change is on disk.</p><p>New top-level image and video files in the story folder appear within a few seconds. Subfolders, symbolic links and ZIP archives are not scanned. Image files are referenced, never copied or uploaded. Image descriptions you write are stored in the project, not in the image files.</p><p>Changes are saved shortly after you stop typing. A browser recovery copy is kept too; if Story Studio stops, leave the page open and start Story Studio again. Saving retries automatically.</p><p><code>story-project.json.bak</code> holds the previous saved version. Dropbox can sync these files, but do not edit on two computers simultaneously. Conflicting file changes pause saving instead of overwriting.</p><p><strong>Previous browser-only edits:</strong> open the old file-based editor, download a JSON backup, then import it here once.</p><p>Download backup exports editable JSON, including private notes. Export story HTML makes a read-only story without notes; save it beside the images. Nothing is sent to an internet service.</p>';
     try {
-      server = await responseJSON(await fetch('/api/bootstrap', {signal:AbortSignal.timeout(10000)}));
+      server = await responseJSON(await fetch('api/bootstrap', {signal:AbortSignal.timeout(10000)}));
       if (server.version !== SERVER_VERSION) throw Object.assign(Error('outdated server'), {outdated:true});
       DATA.images = server.images; imageSignature = server.signature;
       project = validate(server.project); diskSavedVersion = serialize();
       activeChapter = project.chapters[0].id;
+      adoptLegacyRecovery(project.id);
       try {
         const raw = localStorage.getItem(KEY), stored = raw ? JSON.parse(raw) : null;
         if (stored) {
@@ -1505,12 +1540,15 @@
       $('folder-status').textContent = 'Watching this folder · new images and videos appear automatically';
       setInterval(pollServer, 2000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) pollServer(); else if (serverDirty) queueServerSave(); });
+      if (storyId) startUpdates();
     } catch (error) {
+      if (error.status === 404 && storyId) { $('workspace').disabled = false; showMissing(); startUpdates(); return; }
+      if (storyId && error.status) startUpdates(); // Story Studio answered, so updates can still be offered.
       project ||= clone(DATA.seed); activeChapter ||= project.chapters[0].id;
       buildLibrary(); renderEditor();
       recovery('server-error', error.outdated
-        ? 'Story studio was updated, but the old version is still running in the background. Close the launcher window (or press Ctrl+C in it), start Story Studio again, then reload this page. Nothing has been saved or changed.'
-        : 'Could not open the automatic project: ' + error.message + '. Keep the launcher running, then reload. The disk project has not been overwritten.', serialize());
+        ? 'This page and the running Story Studio are different versions. Reload this page; if the warning stays, quit Story Studio (tray icon → Quit) and start it again. Nothing has been saved or changed.'
+        : 'Could not open the story: ' + error.message + '. Make sure Story Studio is running, then reload. The project file has not been overwritten.', serialize());
     }
   }
   bindEvents(); loadInitial();

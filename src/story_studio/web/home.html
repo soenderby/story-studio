@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Story Studio</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="editor.css">
+  <link rel="stylesheet" href="home.css">
+  <script defer src="update.js"></script>
+  <script defer src="home.js"></script>
+</head>
+<body class="home">
+  <header class="topbar">
+    <div class="topbar-left"><a class="brand" href="/"><img class="brand-icon" src="icon.svg" alt="" hidden>Story Studio</a></div>
+    <label class="home-toggle"><input type="checkbox" id="hide-images"> Hide images</label>
+  </header>
+  <div id="update-banner" hidden></div>
+  <main class="home-main" id="main">
+    <div class="home-heading" id="home-heading" hidden>
+      <h1>Your stories</h1>
+      <div class="home-actions">
+        <button id="new-story" type="button" class="primary">+ New story</button>
+        <button id="add-story" type="button">Add existing folder…</button>
+      </div>
+    </div>
+    <p id="pick-status" class="pick-status" role="status" hidden><span class="update-spinner small" aria-hidden="true"></span><span id="pick-status-text"></span></p>
+
+    <form id="new-form" class="new-form" hidden aria-labelledby="new-form-title">
+      <h2 id="new-form-title">Name your new story</h2>
+      <p class="hint">Folder: <code id="new-path"></code> <button id="new-other" type="button" class="link">Choose a different folder</button></p>
+      <label class="field" for="new-title">Title</label>
+      <input id="new-title" class="new-title" autocomplete="off" maxlength="200">
+      <p class="hint">Put the story’s pictures and videos in this folder too. You can change the title at any time.</p>
+      <p id="new-error" class="form-error" role="alert" hidden></p>
+      <div class="form-actions"><button type="submit" class="primary" id="new-create">Create story</button><button type="button" id="new-cancel">Cancel</button></div>
+    </form>
+
+    <p id="loading" class="home-loading" role="status">Loading your stories…</p>
+
+    <section id="offline" class="state-panel" hidden aria-labelledby="offline-title">
+      <h2 id="offline-title">Story Studio isn’t responding</h2>
+      <p>This page could not reach Story Studio on this computer. It may have been closed, or it is restarting.</p>
+      <p>Start <strong>Story Studio</strong> again from the Start menu. This page reconnects by itself as soon as it answers. Your stories are safe in their folders.</p>
+      <p class="hint" id="offline-detail"></p>
+      <button id="retry" type="button" class="primary">Try again</button>
+    </section>
+
+    <section id="welcome" class="state-panel welcome" hidden aria-labelledby="welcome-title">
+      <img class="welcome-icon" src="icon.svg" alt="" hidden>
+      <span class="eyebrow">Welcome</span>
+      <h2 id="welcome-title">Start your first illustrated story</h2>
+      <p>Each story lives in a folder you choose, with its pictures and videos beside it. Story Studio writes your chapters into that folder as you type, and keeps a list of your story folders here.</p>
+      <div class="welcome-actions">
+        <button id="welcome-new" type="button" class="primary">Create a new story</button>
+        <button id="welcome-add" type="button">Add an existing story folder…</button>
+      </div>
+      <p class="hint">Everything stays on this computer. Nothing is uploaded, and your pictures are never changed.</p>
+    </section>
+
+    <ul id="story-list" class="story-list" aria-label="Stories"></ul>
+  </main>
+  <footer class="home-footer">
+    <span data-app-version>Story Studio</span>
+    <button type="button" class="link" data-update-check hidden>Check for updates</button>
+  </footer>
+  <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="notice-action" type="button" hidden></button><button id="notice-close" type="button" class="icon" aria-label="Dismiss">×</button></div>
+</body>
+</html>

@@ -3,16 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Story studio</title>
+  <title>Story Studio</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="editor.css">
   <script defer src="editor-data.js"></script>
+  <script defer src="update.js"></script>
   <script defer src="editor.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-left">
       <button id="toggle-chapters" type="button" class="icon" aria-pressed="true" title="Show / hide chapters">☰</button>
-      <a class="brand" href="editor.html">Story studio</a>
+      <a id="all-stories" class="back-link" href="/" title="Back to the list of all your stories" hidden>←<span class="label"> All stories</span></a>
+      <a id="brand" class="brand" href="editor.html"><img class="brand-icon" src="icon.svg" alt="" hidden>Story Studio</a>
       <button id="topbar-title" type="button" class="topbar-title" title="Edit the story title and introduction"></button>
     </div>
     <nav aria-label="Project actions" class="actions">
@@ -39,14 +42,25 @@
           <hr>
           <button id="shortcuts-button" type="button">Keyboard shortcuts</button>
           <button id="help-button-2" type="button">How saving works</button>
+          <button type="button" data-update-check hidden>Check for updates</button>
           <hr>
           <button id="blank-project" type="button" class="danger">Start a blank story…</button>
+          <span class="menu-label menu-version" data-app-version></span>
         </div>
       </div>
     </nav>
   </header>
+  <div id="update-banner" hidden></div>
   <div id="recovery" class="recovery" hidden><p id="recovery-message"></p><button id="recovery-download" type="button">Download recovery copy</button> <button id="recovery-resolve" type="button">Reload saved draft</button></div>
   <noscript><p class="recovery">This editor needs JavaScript.</p></noscript>
+  <section id="missing-story" class="missing-story" aria-labelledby="missing-title" hidden>
+    <span class="eyebrow">Story not found</span>
+    <h1 id="missing-title">This story’s folder is missing or was removed</h1>
+    <p>Story Studio cannot find the folder for this story. It may have been moved, renamed or deleted, or the story was removed from your list. Story Studio itself never deletes story files.</p>
+    <p>On the home page you can <strong>Locate</strong> a moved folder, or add the folder again.</p>
+    <p id="missing-recovery-note" class="hint" hidden>This browser still holds a recovery copy of the story’s last draft. Download it to keep it safe.</p>
+    <div class="missing-actions"><a class="button primary" href="/">← All stories</a><button id="missing-recovery" type="button" hidden>Download recovery copy</button></div>
+  </section>
   <fieldset id="workspace" class="workspace" aria-label="Story editing workspace">
     <aside class="chapters pane" id="chapters-pane" aria-label="Chapters">
       <div class="side-items">
@@ -171,7 +185,7 @@
   <dialog id="help" aria-labelledby="help-title">
     <h2 id="help-title">Your draft, safely saved</h2>
     <div id="help-content"><p><strong>Browser autosave:</strong> every edit is saved to this browser’s local storage. Reopen this same <code>editor.html</code>, at the same location, in the same browser/profile to continue. Private browsing, clearing browser data, moving the editor or changing browsers can lose access to that copy. It is <strong>not a Dropbox backup</strong>.</p>
-    <p><strong>Recommended: use the Start Story Studio launcher</strong>, which saves to <code>story-project.json</code> automatically. Without it, “Link autosave file…” (Chrome / Edge) writes changes to a JSON project file you choose. To resume after reopening, use “Open project…” on that file again. Do not edit the same project in multiple tabs or computers at once.</p>
+    <p><strong>Recommended: open your story from the Story Studio app</strong>, which saves to <code>story-project.json</code> in the story’s folder automatically. Without it, “Link autosave file…” (Chrome / Edge) writes changes to a JSON project file you choose. To resume after reopening, use “Open project…” on that file again. Do not edit the same project in multiple tabs or computers at once.</p>
     <p><strong>Portable backup:</strong> “Download backup” downloads a JSON copy containing chapters, text, captions, image order, image descriptions and private notes. Use “Open project…” to restore it.</p>
     <p><strong>Finished story:</strong> “Read” shows the current draft. “Export story HTML” downloads a read-only page, without private notes. Save that HTML beside the original image files so its picture links work.</p>
     <p>Only top-level images and videos are listed. Your images and videos are never overwritten by the editor. “Hide images” hides pictures and videos in the editor and preview.</p>

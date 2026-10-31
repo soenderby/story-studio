@@ -22,3 +22,7 @@ build/
 dist/
 *.spec.bak
 .story-save-*.tmp
+
+# Packaging build outputs (packaging/build.ps1)
+.venv-build/
+packaging/Output/
