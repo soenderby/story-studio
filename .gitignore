@@ -1,0 +1,24 @@
+# Never commit story content: the repository is public.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.mp4
+*.m4v
+*.mov
+*.webm
+*.ogv
+*.zip
+story-project*.json
+story-project.json.bak
+!tests/fixtures/**
+
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec.bak
+.story-save-*.tmp

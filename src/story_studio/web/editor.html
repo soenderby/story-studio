@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Story studio</title>
+  <link rel="stylesheet" href="editor.css">
+  <script defer src="editor-data.js"></script>
+  <script defer src="editor.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="toggle-chapters" type="button" class="icon" aria-pressed="true" title="Show / hide chapters">☰</button>
+      <a class="brand" href="editor.html">Story studio</a>
+      <button id="topbar-title" type="button" class="topbar-title" title="Edit the story title and introduction"></button>
+    </div>
+    <nav aria-label="Project actions" class="actions">
+      <div class="menu-wrap save-wrap">
+        <button id="save-indicator" type="button" class="save-indicator" data-menu aria-expanded="false" data-state="busy"><span class="dot" aria-hidden="true"></span><span id="save-short">Loading…</span></button>
+        <div class="menu popover save-details" hidden>
+          <p id="file-status">No project file linked</p>
+          <p id="save-status" role="status" aria-live="polite">Loading draft…</p>
+          <button id="help-button" type="button">How saving works</button>
+        </div>
+      </div>
+      <span class="button-group"><button id="undo" type="button" disabled title="Undo (Ctrl+Z)">↶<span class="label"> Undo</span></button><button id="redo" type="button" disabled title="Redo (Ctrl+Shift+Z)">↷<span class="label"> Redo</span></button></span>
+      <button id="focus-toggle" type="button" aria-pressed="false" title="Hide both side panels (F11 for full screen)">Focus</button>
+      <button id="toggle-library" type="button" aria-pressed="true" title="Show / hide the image library">Images</button>
+      <button id="preview-toggle" type="button" class="primary" aria-pressed="false">Read</button>
+      <div class="menu-wrap">
+        <button type="button" data-menu aria-expanded="false" aria-label="More actions">⋯</button>
+        <div class="menu" hidden>
+          <button id="export-html" type="button">Export story HTML</button>
+          <button id="download-project" type="button">Download backup (JSON)</button>
+          <button id="open-project" type="button">Open project…</button>
+          <button id="link-file" type="button">Link autosave file…</button>
+          <button id="add-image-files" type="button" title="Choose images or videos already placed beside this editor. They are referenced by name, not copied.">Add image or video files…</button>
+          <hr>
+          <button id="shortcuts-button" type="button">Keyboard shortcuts</button>
+          <button id="help-button-2" type="button">How saving works</button>
+          <hr>
+          <button id="blank-project" type="button" class="danger">Start a blank story…</button>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <div id="recovery" class="recovery" hidden><p id="recovery-message"></p><button id="recovery-download" type="button">Download recovery copy</button> <button id="recovery-resolve" type="button">Reload saved draft</button></div>
+  <noscript><p class="recovery">This editor needs JavaScript.</p></noscript>
+  <fieldset id="workspace" class="workspace" aria-label="Story editing workspace">
+    <aside class="chapters pane" id="chapters-pane" aria-label="Chapters">
+      <div class="side-items">
+        <button id="outline-item" type="button" class="title-page-item private-item" title="Your private plan for the story. Never shown to readers."><span class="chapter-number">Story outline · private</span><span id="outline-item-stats" class="chapter-stats"></span></button>
+        <button id="disclaimer-item" type="button" class="title-page-item" title="Shown to readers before the title"><span class="chapter-number">Disclaimer · shown first</span><span id="disclaimer-item-name" class="chapter-stats"></span></button>
+        <button id="title-page-item" type="button" class="title-page-item"><span class="chapter-number">Title page</span><span id="title-page-name" class="chapter-name"></span></button>
+      </div>
+      <div class="pane-heading"><h2>Chapters</h2><button id="add-chapter" type="button" title="Add a chapter after the last one">+ New</button></div>
+      <ol id="chapter-list" class="chapter-list"></ol>
+      <p id="story-stats" class="hint"></p>
+      <p class="hint">Drag chapters to reorder them. Drop images or blocks onto a chapter to move them there.</p>
+    </aside>
+    <main class="writing" id="writing">
+      <div class="page">
+        <section id="outline-page" class="outline-page" aria-label="Story outline" hidden>
+          <div class="chapter-heading">
+            <span class="eyebrow">Story outline · private</span>
+            <div class="chapter-actions">
+              <button id="outline-chapters" type="button" class="quiet" title="Add the current chapter titles to the end of the outline">Insert chapter list</button>
+              <button id="outline-download" type="button" class="quiet">Download (.md)</button>
+            </div>
+          </div>
+          <p class="hint">Plan the whole story here: premise, characters, the arc, chapter beats, open questions. The outline is saved with the project, but it never appears in Read, Print or Export.</p>
+          <label><span class="sr-only">Story outline</span><textarea id="outline-text" class="outline-input" placeholder="Premise, characters, the shape of the story, chapter by chapter…"></textarea></label>
+          <p id="outline-count" class="hint"></p>
+        </section>
+        <section id="disclaimer-page" class="disclaimer-page" aria-label="Disclaimer" hidden>
+          <span class="eyebrow">Disclaimer · the first thing readers see</span>
+          <p class="hint">Shown above the title in Read, Print and exported HTML. Leave it empty to show no disclaimer.</p>
+          <label><span class="sr-only">Disclaimer text</span><textarea id="disclaimer-text" class="disclaimer-input" placeholder="For example: This story is intended for adult readers. It contains…"></textarea></label>
+          <label class="check-row"><input type="checkbox" id="disclaimer-gate"> <span>Readers must click <strong>Continue</strong> before the story appears <span class="hint">(exported HTML)</span></span></label>
+          <button id="disclaimer-continue" type="button" class="primary">Go to the title page →</button>
+        </section>
+        <section id="title-page" class="title-page" aria-label="Title page" hidden>
+          <span class="eyebrow">Title page</span>
+          <label><span class="sr-only">Story title</span><input id="project-title" class="title-input" placeholder="Your story title" autocomplete="off"></label>
+          <label><span class="sr-only">Introduction</span><textarea id="project-subtitle" class="subtitle-input" rows="2" placeholder="An optional introduction to the whole story…"></textarea></label>
+          <p class="hint">The title and introduction open the finished story, above the chapter list.</p>
+          <button id="title-page-continue" type="button" class="primary">Start writing →</button>
+        </section>
+        <section id="chapter-editor" aria-label="Selected chapter">
+          <div class="chapter-heading">
+            <span id="chapter-position" class="eyebrow"></span>
+            <div class="chapter-actions">
+              <button id="notes-toggle" type="button" class="quiet" aria-expanded="false">Notes</button>
+              <button id="delete-chapter" type="button" class="quiet danger">Delete chapter</button>
+            </div>
+          </div>
+          <label><span class="sr-only">Chapter title</span><input id="chapter-title" class="chapter-title-input" placeholder="Untitled chapter" autocomplete="off"></label>
+          <div id="notes-panel" class="notes" hidden>
+            <label><span class="notes-label">Private notes <span class="hint">· never included in the finished story</span></span><textarea id="chapter-notes" rows="3" placeholder="Ideas, continuity notes, things to rewrite…"></textarea></label>
+          </div>
+          <div id="blocks" class="blocks" aria-label="Chapter content"></div>
+          <nav class="chapter-nav" aria-label="Chapter navigation"><button id="prev-chapter" type="button" class="quiet"></button><button id="next-chapter" type="button" class="quiet"></button></nav>
+        </section>
+      </div>
+    </main>
+    <aside class="library pane" id="library-pane" aria-label="Image library">
+      <div class="library-resizer" id="library-resizer" title="Drag to resize" aria-hidden="true"></div>
+      <div class="pane-heading">
+        <h2>Images <span id="library-total" class="badge"></span></h2>
+        <div class="pane-tools"><button id="library-expand" type="button" class="icon" title="Enlarge the library" aria-pressed="false">⤢</button><button id="library-close" type="button" class="icon" title="Close">×</button></div>
+      </div>
+      <div id="pick-banner" class="pick-banner" hidden><span id="pick-text"></span><button id="pick-cancel" type="button">Cancel</button></div>
+      <p class="insert-info" id="insert-info">New images go <strong id="insert-where">at the end of this chapter</strong> <button id="insert-reset" type="button" class="link" hidden>use end of chapter</button></p>
+      <label class="search"><span class="sr-only">Search images</span><input id="image-search" type="search" placeholder="Search images…  ( / )" autocomplete="off"></label>
+      <div class="library-filters">
+        <label><span class="sr-only">Scene</span><select id="image-category"><option value="">All scenes</option></select></label>
+        <label><span class="sr-only">Sort</span><select id="image-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">By description</option></select></label>
+      </div>
+      <div class="library-options">
+        <label><input type="checkbox" id="unused-only"> Unused only</label>
+        <label><input type="checkbox" id="hide-thumbnails"> Hide images</label>
+        <span class="thumb-size" role="group" aria-label="Thumbnail size"><button type="button" data-thumb-size="s" title="Small thumbnails">S</button><button type="button" data-thumb-size="m" title="Medium thumbnails">M</button><button type="button" data-thumb-size="l" title="Large thumbnails">L</button></span>
+      </div>
+      <div class="library-toolbar"><span id="library-count" role="status"></span><span><button id="clear-selected" type="button" class="link" hidden>Clear</button> <button id="add-selected" type="button" class="primary" hidden>Insert selected (0)</button> <button id="add-selected-group" type="button" class="primary" hidden title="Insert the ticked pictures as one group, in a row or grid, with a single caption">Insert as one group</button></span></div>
+      <div id="image-library" class="image-library"></div>
+      <p id="folder-status" class="hint folder-status" role="status">Connecting to the image folder…</p>
+    </aside>
+  </fieldset>
+  <div id="library-backdrop" class="library-backdrop" hidden></div>
+  <main id="preview" class="preview" hidden aria-label="Story preview"></main>
+  <div id="notice" class="notice" role="status" hidden><span id="notice-text"></span><button id="notice-action" type="button" hidden></button><button id="notice-close" type="button" class="icon" aria-label="Dismiss">×</button></div>
+
+  <dialog id="lightbox" class="lightbox" aria-label="Image viewer">
+    <div class="lb-stage">
+      <button id="lb-prev" type="button" class="lb-nav" aria-label="Previous image">‹</button>
+      <img id="lb-image" alt="">
+      <video id="lb-video" controls playsinline hidden></video>
+      <button id="lb-next" type="button" class="lb-nav" aria-label="Next image">›</button>
+    </div>
+    <aside class="lb-side">
+      <div class="lb-top"><span id="lb-position" class="eyebrow"></span><button id="lb-close" type="button" class="icon" aria-label="Close">×</button></div>
+      <label class="field">Description<textarea id="lb-title" rows="3" placeholder="What happens in this picture?"></textarea></label>
+      <label class="field">Scene<input id="lb-category" list="scene-list" autocomplete="off" placeholder="e.g. Beach · evening"></label>
+      <datalist id="scene-list"></datalist>
+      <p class="hint">Descriptions help you search. They are saved with the project, never written into the image files.</p>
+      <p id="lb-used" class="lb-used"></p>
+      <p id="lb-file" class="lb-file"></p>
+      <div class="lb-actions"><button id="lb-insert" type="button" class="primary">Insert</button><button id="lb-replace" type="button">Replace this image…</button></div>
+      <p id="lb-where" class="hint"></p>
+      <p class="hint">← → browse · Enter inserts · Esc closes</p>
+    </aside>
+  </dialog>
+
+  <dialog id="shortcuts" aria-labelledby="shortcuts-title">
+    <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+    <table class="keys">
+      <tr><td><kbd>Ctrl</kbd> <kbd>Enter</kbd></td><td>In text: split here / start a new text block</td></tr>
+      <tr><td><kbd>Backspace</kbd></td><td>At the very start of a text block: join it with the text above</td></tr>
+      <tr><td><kbd>Alt</kbd> <kbd>↑</kbd> / <kbd>↓</kbd></td><td>Move the current block up / down</td></tr>
+      <tr><td><kbd>Alt</kbd> <kbd>I</kbd></td><td>Pick an image to insert at the cursor</td></tr>
+      <tr><td><kbd>Alt</kbd> <kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>Previous / next chapter</td></tr>
+      <tr><td><kbd>/</kbd></td><td>Search images</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Z</kbd> · <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></td><td>Undo · redo (inside a text field, these undo typing first)</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>S</kbd></td><td>Save now (saving is automatic anyway)</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Close the viewer, enlarged library or a menu</td></tr>
+    </table>
+    <form method="dialog"><button class="primary">Got it</button></form>
+  </dialog>
+
+  <dialog id="help" aria-labelledby="help-title">
+    <h2 id="help-title">Your draft, safely saved</h2>
+    <div id="help-content"><p><strong>Browser autosave:</strong> every edit is saved to this browser’s local storage. Reopen this same <code>editor.html</code>, at the same location, in the same browser/profile to continue. Private browsing, clearing browser data, moving the editor or changing browsers can lose access to that copy. It is <strong>not a Dropbox backup</strong>.</p>
+    <p><strong>Recommended: use the Start Story Studio launcher</strong>, which saves to <code>story-project.json</code> automatically. Without it, “Link autosave file…” (Chrome / Edge) writes changes to a JSON project file you choose. To resume after reopening, use “Open project…” on that file again. Do not edit the same project in multiple tabs or computers at once.</p>
+    <p><strong>Portable backup:</strong> “Download backup” downloads a JSON copy containing chapters, text, captions, image order, image descriptions and private notes. Use “Open project…” to restore it.</p>
+    <p><strong>Finished story:</strong> “Read” shows the current draft. “Export story HTML” downloads a read-only page, without private notes. Save that HTML beside the original image files so its picture links work.</p>
+    <p>Only top-level images and videos are listed. Your images and videos are never overwritten by the editor. “Hide images” hides pictures and videos in the editor and preview.</p>
+    </div><form method="dialog"><button class="primary">Got it</button></form>
+  </dialog>
+  <input id="import-file" type="file" accept=".json,application/json" hidden>
+  <input id="image-files" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,video/mp4,video/webm,video/quicktime,video/ogg,.m4v" multiple hidden>
+</body>
+</html>
