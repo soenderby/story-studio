@@ -41,6 +41,16 @@ class RenderPdfTest(unittest.TestCase):
         self.assertFalse(Path(profile.split('=', 1)[1]).exists())  # The throwaway folder is removed afterwards.
         self.assertEqual(options['timeout'], pdf.TIMEOUT)
 
+    def test_drops_the_windows_compatibility_layer(self):
+        calls, run = self.fake_browser()
+        with mock.patch.object(pdf, 'find_browser', return_value=Path('/opt/edge/msedge')), \
+                mock.patch.object(pdf.subprocess, 'run', run), \
+                mock.patch.dict(pdf.os.environ, {'__COMPAT_LAYER': 'DetectorsAppHealth', 'STORY_STUDIO_PROBE': 'kept'}):
+            pdf.render_pdf(b'<p>x</p>')
+        env = calls[0][1]['env']
+        self.assertNotIn('__COMPAT_LAYER', {key.upper() for key in env})
+        self.assertIn('kept', env.values())
+
     def test_reports_a_browser_that_writes_nothing(self):
         _, run = self.fake_browser(write=None, stderr=b'noise\nPage load failed\n')
         with mock.patch.object(pdf, 'find_browser', return_value=Path('/opt/edge/msedge')), \

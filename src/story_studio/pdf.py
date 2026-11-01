@@ -34,6 +34,12 @@ def find_browser():
     return next((path for path in browser_candidates() if path.is_file()), None)
 
 
+def browser_environment():
+    """This app's environment without Windows compatibility shims. An app started by the update installer inherits
+    __COMPAT_LAYER (e.g. DetectorsAppHealth), and Edge started with it exits at once, with code 0, without a PDF."""
+    return {key: value for key, value in os.environ.items() if key.upper() != '__COMPAT_LAYER'}
+
+
 def render_pdf(html):
     """PDF bytes for `html` (bytes of a complete, self-contained page). Raises PdfUnavailable without a browser."""
     browser = find_browser()
@@ -47,7 +53,7 @@ def render_pdf(html):
             [str(browser), '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
              '--disable-extensions', '--disable-sync', '--user-data-dir=' + str(folder / 'profile'),
              '--no-pdf-header-footer', '--print-to-pdf=' + str(output), page.as_uri()],
-            capture_output=True, timeout=TIMEOUT, creationflags=NO_WINDOW)
+            capture_output=True, timeout=TIMEOUT, creationflags=NO_WINDOW, env=browser_environment())
         if not output.is_file() or output.stat().st_size == 0:
             detail = result.stderr.decode('utf-8', 'replace').strip().splitlines()[-1:] or [f'exit code {result.returncode}']
             raise OSError(f'{browser.stem} did not produce a PDF ({detail[0]}).')
