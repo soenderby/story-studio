@@ -14,18 +14,19 @@ import subprocess
 import threading
 from urllib.parse import unquote, urlsplit
 
-from . import desktop, paths
+from . import desktop, paths, pdf
 from .registry import Registry, Settings, now
 from .story import MAX_BODY, PROJECT_NAME, Studio, byte_range, encode, media_type, prepare_story
 from .updates import Conflict, Updater
 from .version import __version__
 
-SERVER_VERSION = 7  # Bump when the project format or API changes, so stale instances are detected.
+SERVER_VERSION = 8  # Bump when the project format or API changes, so stale instances are detected.
 log = logging.getLogger('story_studio')
 # Only these types are served from web/. None of them is a media type, so a story's media is never shadowed.
 WEB_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
              '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon'}
 STORY_ROUTE = re.compile(r'/s/(s[0-9a-f]{16})(/.*)?')
+MAX_EXPORT = 1 << 30  # Bytes. A self-contained story page with its pictures embedded, sent for PDF export.
 STORY_ACTION = re.compile(r'/api/stories/(s[0-9a-f]{16})/(remove|relocate|reveal)')
 
 
@@ -49,18 +50,20 @@ class StudioServer(ThreadingHTTPServer):
     # On Windows SO_REUSEADDR would let a second server bind a port that is in use; see server_bind.
     allow_reuse_address = os.name != 'nt'
 
-    def __init__(self, home, port=0, picker=None, revealer=None, updater=None, on_quit=None):
+    def __init__(self, home, port=0, picker=None, revealer=None, updater=None, on_quit=None, pdf_renderer=None):
         self.home = Path(home)
         self.registry = Registry(self.home)
         self.settings = Settings(self.home)
         self.updater = updater or Updater(self.settings)
         self.picker = picker or desktop.pick_folder
         self.revealer = revealer or desktop.reveal_folder
+        self.pdf_renderer = pdf_renderer or pdf.render_pdf
         self.on_quit = on_quit
         self.token = secrets.token_urlsafe(32)
         self.studios = {}  # id -> (path, Studio): one per open story, each with its own lock.
         self.studios_lock = threading.Lock()
         self.pick_lock = threading.Lock()
+        self.pdf_lock = threading.Lock()
         super().__init__(('127.0.0.1', port), Handler)
 
     def server_bind(self):
@@ -282,12 +285,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = unquote(urlsplit(self.path).path)
         try:
-            self.route_post(path, self.read_body())
+            if (match := STORY_ROUTE.fullmatch(path)) and match[2] == '/api/export-pdf':
+                self.export_pdf(match[1])
+            else:
+                self.route_post(path, self.read_body())
         except Refused as error:
             self.json(error.status, {'error': str(error)})
         except NotImplementedError as error:
             self.json(501, {'error': str(error)})
-        except desktop.PickerUnavailable as error:
+        except (desktop.PickerUnavailable, pdf.PdfUnavailable) as error:
             self.json(501, {'error': str(error)})
         except (ValueError, TypeError, KeyError) as error:
             self.json(400, {'error': str(error)})
@@ -335,6 +341,21 @@ class Handler(BaseHTTPRequestHandler):
         else:
             raise Refused(404, 'Unknown endpoint.')
 
+    def export_pdf(self, sid):
+        """The request body is the complete story page (text/html, pictures embedded); the reply is the PDF."""
+        self.require_studio(sid)
+        length = int(self.headers.get('Content-Length') or 0)
+        if length <= 0 or length > MAX_EXPORT:
+            raise Refused(413, 'The story page for PDF export must be between 1 byte and 1 GB.')
+        html = self.rfile.read(length)
+        if not self.server.pdf_lock.acquire(blocking=False):
+            raise Refused(409, 'A PDF export is already running.')
+        try:
+            document = self.server.pdf_renderer(html)
+        finally:
+            self.server.pdf_lock.release()
+        self.send_data(200, document, 'application/pdf')
+
     def add_story(self, body):
         title = body.get('title')
         if title is not None and (not isinstance(title, str) or len(title) > 10000):
@@ -375,5 +396,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(home, port=0, **options):
-    """A server for the app data in `home`. Options: picker, revealer, updater, on_quit (see StudioServer)."""
+    """A server for the app data in `home`. Options: picker, revealer, updater, on_quit, pdf_renderer (see StudioServer)."""
     return StudioServer(home, port, **options)

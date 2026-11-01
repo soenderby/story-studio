@@ -1,6 +1,6 @@
 # Story Studio
 
-A local editor for illustrated stories. Write chapters, place images and videos between paragraphs, group them into rows and grids, and export a finished story as a single HTML page.
+A local editor for illustrated stories. Write chapters, place images and videos between paragraphs, group them into rows and grids, and export a finished story as a single HTML page or a PDF, with the pictures included.
 
 Everything runs on your own computer. A story is an ordinary folder holding your images, videos and a `story-project.json` file. Nothing is uploaded anywhere, and the media files are never modified.
 

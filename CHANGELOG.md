@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### New
+
+- **Export PDF** (⋯ menu): downloads the story as an A4 PDF with the pictures, each chapter on a new page. Videos appear as their first frame.
+
+### Fixed
+
+- **Pictures were missing from exported HTML** unless the file was saved into the story's own folder. The exported HTML now contains the pictures and videos, so it works anywhere. Pictures are stored as high-quality WebP, so the file stays much smaller than the originals.
+
 ## 0.3.1 (2026-11-01)
 
 ### Fixed

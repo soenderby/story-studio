@@ -5,7 +5,7 @@ This is the contract that phases 1–5 build against (see [PLAN.md](PLAN.md)). C
 ## Versions
 
 - **App version**: semver string in `src/story_studio/version.py` (`__version__`). It is what releases and the updater compare.
-- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks.
+- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks; **8** adds PDF export.
 - **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version": 1`. Unchanged by this plan. Optional fields added since, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below). A future format bump must migrate forward, write `story-project.v<old>.backup.json` first, and an older app opening a newer-format project must refuse to save instead of overwriting it.
 
 ## Files and folders
@@ -96,6 +96,7 @@ def main() -> None                # CLI: python -m story_studio [--port N] [--no
 | `GET /s/<id>/api/bootstrap` | As today, plus `"storyId"` and `"appVersion"`. Also sets `lastOpened`. `500 {"error"}` if the project cannot be read (it is left untouched). |
 | `GET /s/<id>/api/images` | As today. |
 | `POST /s/<id>/api/project` | As today (revision check, `.bak`, atomic write). |
+| `POST /s/<id>/api/export-pdf` | API 8. Body: the complete, self-contained story page (`text/html`, pictures embedded as data URLs, up to 1 GB), *not* JSON. Reply: `200 application/pdf`. The page is printed by a headless Edge or Chrome (`pdf.py`) from a private temporary folder with a throwaway profile. `501` when neither browser is installed (the editor then offers Read → Print), `409` while another PDF export runs, `413` for an empty or oversized body. |
 
 Unknown or missing story → `404 {"error"}` for the API and media routes. `editor.html` and the other web assets are still served for such an id, so the editor can load, get the 404 from `api/bootstrap` and show "This story's folder is missing" with a link back to the home page.
 

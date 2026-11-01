@@ -9,7 +9,7 @@
   const UI_KEY = BASE_KEY + ':ui', HIDE_KEY = BASE_KEY + ':hide-images';
   const SIZES = ['small', 'medium', 'large', 'wide'];
   const LAYOUTS = ['row', 'grid'], MAX_GROUP = 12;
-  const SERVER_VERSION = 7; // 7: text blocks can carry comments. The editor runs under /s/<id>/ with relative API URLs.
+  const SERVER_VERSION = 8; // 7: text blocks can carry comments. 8: PDF export. The editor runs under /s/<id>/ with relative API URLs.
   const COMMENT_LABELS = {note:'Note', change:'Change', question:'Question', keep:'Keep'}, MAX_COMMENTS = 500;
   const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i;
   const VIDEO_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#2b302d"/><path d="M6 4.5v7l5.5-3.5z" fill="#fff"/></svg>');
@@ -1294,17 +1294,135 @@
     const note = !forExport && project.disclaimerGate ? '<span class="disclaimer-note">In the exported story, readers must click Continue first.</span>' : '';
     return `<aside class="disclaimer" aria-label="Disclaimer">${esc(text)}${note}</aside>`;
   }
-  function figureMarkup(b, forExport) {
+  // media (exports only): file -> {src, still}; a still is a video's first frame, used in PDFs. Without an entry,
+  // the export links the file by name, which works only beside the story's files.
+  function figureMarkup(b, forExport, media = null, forPdf = false) {
     const img = file => {
-      const src = esc(forExport ? fileURL(file) : imageURL(file)), title = esc(metadata(file).title);
-      return (isVideo(file) ? `<video src="${src}" aria-label="${title}" controls playsinline preload="metadata"></video>` : `<img src="${src}" alt="${title}" loading="lazy">`) + (forExport ? '' : hiddenMediaHTML(file));
+      const entry = forExport ? media?.get(file) : null;
+      const src = esc(entry ? entry.src : forExport ? fileURL(file) : imageURL(file)), title = esc(metadata(file).title);
+      if (forPdf && !entry) return `<div class="media-missing">${isVideo(file) ? 'Video' : 'Picture'}: ${title}</div>`;
+      return (isVideo(file) && !entry?.still ? `<video src="${src}" aria-label="${title}" controls playsinline preload="metadata"></video>` : `<img src="${src}" alt="${title}"${forPdf ? '' : ' loading="lazy"'}>`) + (forExport ? '' : hiddenMediaHTML(file));
     };
     const classes = [b.size && b.size !== 'large' ? 'size-' + b.size : '', b.type === 'gallery' ? 'gallery layout-' + b.layout : ''].filter(Boolean).join(' ');
     const body = b.type === 'gallery' ? `<div class="gallery-cells" style="--cols:${groupColumns(b)}">${b.items.map(x => img(x.file)).join('')}</div>` : img(b.file);
     return `<figure${classes ? ` class="${esc(classes)}"` : ''}>${body}${b.caption ? `<figcaption>${esc(b.caption)}</figcaption>` : ''}</figure>`;
   }
-  function storyMarkup(forExport = false) {
-    return disclaimerMarkup(forExport) + `<h1>${esc(project.title || 'Untitled story')}</h1>${project.subtitle ? `<p class="subtitle">${esc(project.subtitle)}</p>` : ''}<nav aria-label="Chapters">${project.chapters.map((c,i) => `<a href="#read-${esc(c.id)}">${i+1}. ${esc(chapterName(c))}</a>`).join(' · ')}</nav>` + project.chapters.map((c,index) => `<section class="preview-chapter" id="read-${esc(c.id)}"><div class="eyebrow">Chapter ${index+1}${forExport ? '' : `<button type="button" class="preview-edit" data-edit-chapter="${esc(c.id)}">Edit</button>`}</div><h2>${esc(chapterName(c))}</h2>${c.blocks.map(b => b.type === 'text' ? (b.text ? (forExport ? `<div class="prose">${esc(b.text)}</div>` : `<div class="prose" data-block="${esc(b.id)}">${ui.readComments ? marksHTML(b) : esc(b.text)}</div>`) : '') : figureMarkup(b, forExport)).join('')}${!forExport && !c.blocks.length ? '<p class="preview-empty">This chapter is empty. Return to the editor to add text or images.</p>' : ''}</section>`).join('');
+  function storyMarkup(forExport = false, media = null, forPdf = false) {
+    return disclaimerMarkup(forExport) + `<h1>${esc(project.title || 'Untitled story')}</h1>${project.subtitle ? `<p class="subtitle">${esc(project.subtitle)}</p>` : ''}<nav aria-label="Chapters">${project.chapters.map((c,i) => `<a href="#read-${esc(c.id)}">${i+1}. ${esc(chapterName(c))}</a>`).join(' · ')}</nav>` + project.chapters.map((c,index) => `<section class="preview-chapter" id="read-${esc(c.id)}"><div class="eyebrow">Chapter ${index+1}${forExport ? '' : `<button type="button" class="preview-edit" data-edit-chapter="${esc(c.id)}">Edit</button>`}</div><h2>${esc(chapterName(c))}</h2>${c.blocks.map(b => b.type === 'text' ? (b.text ? (forExport ? `<div class="prose">${esc(b.text)}</div>` : `<div class="prose" data-block="${esc(b.id)}">${ui.readComments ? marksHTML(b) : esc(b.text)}</div>`) : '') : figureMarkup(b, forExport, media, forPdf)).join('')}${!forExport && !c.blocks.length ? '<p class="preview-empty">This chapter is empty. Return to the editor to add text or images.</p>' : ''}</section>`).join('');
+  }
+  /* Exports embed every picture, so the file works anywhere. HTML gets WebP (sharp, small); PDF gets JPEG, which
+     the browser's PDF writer stores as is, and a still frame for each video. Pictures are capped at maxSide pixels. */
+  const EXPORT_FORMATS = {html:{type:'image/webp', quality:0.9, maxSide:2048}, pdf:{type:'image/jpeg', quality:0.88, maxSide:1600}};
+  const MAX_EMBEDDED_VIDEO = 200e6;
+  const PDF_CSS = '@page{size:A4;margin:16mm 14mm}.media-missing{margin:auto;max-width:70%;padding:2rem;border:1px dashed #bcc6b8;border-radius:8px;text-align:center;font:italic .95rem/1.6 Georgia,serif;color:#657166}';
+  let exporting = false;
+  function exportFiles() { return [...new Set(project.chapters.flatMap(c => c.blocks.flatMap(blockFiles)))]; }
+  function blobDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function encodePicture(source, width, height, format) {
+    const scale = Math.min(1, format.maxSide / Math.max(width, height, 1));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (format.type === 'image/jpeg') { context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height); }
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const encode = type => new Promise(resolve => canvas.toBlob(resolve, type, format.quality));
+    let blob = await encode(format.type);
+    if (!blob || blob.type !== format.type) blob = await encode('image/jpeg'); // Browsers that cannot write WebP.
+    if (!blob) throw Error('The browser could not encode the picture.');
+    return {blob, scaled: scale < 1};
+  }
+  async function fetchMedia(file) {
+    const response = await fetch(imageURL(file));
+    if (!response.ok) throw Error(`${file} is not available (${response.status}).`);
+    return response.blob();
+  }
+  async function embedPicture(file, format) {
+    const original = await fetchMedia(file);
+    if (/\.(gif|svg)$/i.test(file)) return {src: await blobDataURL(original)}; // Keeps animation and vectors.
+    let bitmap;
+    try { bitmap = await createImageBitmap(original); } catch { return {src: await blobDataURL(original)}; }
+    try {
+      const {blob, scaled} = await encodePicture(bitmap, bitmap.width, bitmap.height, format);
+      const keepOriginal = !scaled && original.size <= blob.size && (format.type !== 'image/jpeg' || original.type === 'image/jpeg');
+      return {src: await blobDataURL(keepOriginal ? original : blob)};
+    } finally { bitmap.close(); }
+  }
+  function videoStill(file, format) {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      const done = () => { clearTimeout(timer); video.removeAttribute('src'); video.load(); };
+      const timer = setTimeout(() => { done(); reject(Error(`${file}: the video did not load.`)); }, 30000);
+      video.muted = true; video.playsInline = true; video.preload = 'auto';
+      video.onerror = () => { done(); reject(Error(`${file}: the video could not be read.`)); };
+      video.onloadeddata = () => { video.currentTime = Math.min(0.5, (video.duration || 1) / 10); };
+      video.onseeked = async () => {
+        try { resolve({src: await blobDataURL((await encodePicture(video, video.videoWidth, video.videoHeight, format)).blob), still: true}); }
+        catch (error) { reject(error); } finally { done(); }
+      };
+      video.src = imageURL(file);
+    });
+  }
+  async function embedMedia(kind, progress) {
+    const format = EXPORT_FORMATS[kind], files = exportFiles(), media = new Map(), failed = [];
+    let next = 0, finished = 0;
+    async function worker() {
+      while (next < files.length) {
+        const file = files[next++];
+        try {
+          if (!isVideo(file)) media.set(file, await embedPicture(file, format));
+          else if (kind === 'pdf') media.set(file, await videoStill(file, format));
+          else {
+            const original = await fetchMedia(file);
+            if (original.size > MAX_EMBEDDED_VIDEO) failed.push(file); else media.set(file, {src: await blobDataURL(original)});
+          }
+        } catch (error) { console.warn('Export:', error); failed.push(file); }
+        progress(++finished, files.length);
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(4, files.length)}, worker));
+    return {media, failed};
+  }
+  function storyDocument(media, forPdf) {
+    const gate = !forPdf && !!project.disclaimerGate && !!(project.disclaimer || '').trim();
+    const story = storyMarkup(true, media, forPdf);
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(project.title || 'Untitled story')}</title><style>${READER_CSS}${forPdf ? PDF_CSS : ''}</style>${gate ? '<noscript><style>body.gated main{visibility:visible}#gate{display:none}</style></noscript>' : ''}</head><body${gate ? ' class="gated"' : ''}>${gate ? `<div id="gate" role="dialog" aria-modal="true" aria-label="Disclaimer"><div><aside class="disclaimer">${esc(project.disclaimer.trim())}</aside><button type="button" onclick="document.body.classList.remove('gated');document.getElementById('gate').remove();scrollTo(0,0)">Continue</button></div></div>` : ''}<main>${gate ? story.replace(disclaimerMarkup(true), '') : story}<footer>Illustrated story · exported ${new Date().toLocaleDateString()}</footer></main></body></html>`;
+  }
+  function printFromReadMode() { if (!previewing) showPreview(true); setTimeout(() => window.print(), 100); }
+  async function exportStory(kind) {
+    if (exporting) { notify('An export is already running. Wait for it to finish.'); return; }
+    if (kind === 'pdf' && !server) { notify('PDF export needs the Story Studio app. Open Read and use Print / PDF instead.', true, {label:'Print', run:printFromReadMode}); return; }
+    exporting = true; ['export-html', 'export-pdf'].forEach(id => { $(id).disabled = true; });
+    const label = kind === 'pdf' ? 'PDF' : 'HTML';
+    try {
+      notify(`Preparing the ${label} export…`);
+      const {media, failed} = await embedMedia(kind, (done, total) => notify(`Preparing the ${label} export… picture ${done} of ${total}`));
+      const html = storyDocument(media, kind === 'pdf');
+      const missing = failed.length ? ` ${failed.length} picture${failed.length === 1 ? ' was' : 's were'} not embedded and only show beside the story’s files: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}` : '';
+      if (kind === 'html') {
+        download(projectName('.html'), html, 'text/html;charset=utf-8');
+        notify(`Story exported as one HTML file with the pictures inside. Private notes and comments are not included.${missing}`, !!missing);
+        return;
+      }
+      notify('Creating the PDF…');
+      const response = await fetch('api/export-pdf', {method:'POST', headers:{'Content-Type':'text/html;charset=utf-8', 'X-Story-Token':server.token}, body:html});
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 501) { notify(`${body.error || 'PDF export is not available here.'} You can still print to PDF from Read mode.`, true, {label:'Print', run:printFromReadMode}); return; }
+        throw Error(body.error || `PDF export failed (${response.status}).`);
+      }
+      download(projectName('.pdf'), await response.blob(), 'application/pdf');
+      notify(`Story exported as PDF. Private notes and comments are not included.${missing}`, !!missing);
+    } catch (error) {
+      notify(`${label} export failed: ${error.message}`, true);
+    } finally {
+      exporting = false; ['export-html', 'export-pdf'].forEach(id => { $(id).disabled = false; });
+    }
   }
   function showPreview(show) {
     previewing = show; hideCommentFloat(); $('workspace').hidden = show; $('preview').hidden = !show;
@@ -1821,11 +1939,8 @@
     });
     ['pointerup', 'keyup'].forEach(type => $('preview').addEventListener(type, () => setTimeout(updateReadFloat, 0)));
     document.addEventListener('selectionchange', () => { if ($('comment-float').dataset.mode === 'read' && window.getSelection()?.isCollapsed) hideCommentFloat(); });
-    $('export-html').addEventListener('click', () => {
-      const gate = !!project.disclaimerGate && !!(project.disclaimer || '').trim();
-      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(project.title || 'Untitled story')}</title><style>${READER_CSS}</style>${gate ? '<noscript><style>body.gated main{visibility:visible}#gate{display:none}</style></noscript>' : ''}</head><body${gate ? ' class="gated"' : ''}>${gate ? `<div id="gate" role="dialog" aria-modal="true" aria-label="Disclaimer"><div><aside class="disclaimer">${esc(project.disclaimer.trim())}</aside><button type="button" onclick="document.body.classList.remove('gated');document.getElementById('gate').remove();scrollTo(0,0)">Continue</button></div></div>` : ''}<main>${gate ? storyMarkup(true).replace(disclaimerMarkup(true), '') : storyMarkup(true)}<footer>Illustrated story · exported ${new Date().toLocaleDateString()}</footer></main></body></html>`;
-      download(projectName('.html'), html, 'text/html;charset=utf-8'); notify('Story exported. Save the HTML in this image folder so the picture links work. Private notes are not included.');
-    });
+    $('export-html').addEventListener('click', () => exportStory('html'));
+    $('export-pdf').addEventListener('click', () => exportStory('pdf'));
     $('download-project').addEventListener('click', () => { download(projectName('-project.json'), serialize(), 'application/json'); notify('Backup downloaded. Keep the JSON file with your images; use Open project to restore it.'); });
     $('link-file').addEventListener('click', async () => {
       if (blocked) { notify('Resolve the recovery warning before linking a file.', true); return; }
@@ -1936,7 +2051,7 @@
     $('workspace').disabled = true;
     $('link-file').hidden = true; $('add-image-files').hidden = true;
     $('open-project').textContent = 'Import project…';
-    $('help-content').innerHTML = '<p><strong>Everything saves automatically.</strong> Story Studio creates and updates <code>story-project.json</code> in this story’s folder, beside your images. Opening the story again from the Story Studio home page resumes that file without selecting or reconnecting anything. The dot in the top bar turns green once a change is on disk.</p><p>New top-level image and video files in the story folder appear within a few seconds. Subfolders, symbolic links and ZIP archives are not scanned. Image files are referenced, never copied or uploaded. Image descriptions you write are stored in the project, not in the image files.</p><p>Changes are saved shortly after you stop typing. A browser recovery copy is kept too; if Story Studio stops, leave the page open and start Story Studio again. Saving retries automatically.</p><p><code>story-project.json.bak</code> holds the previous saved version. Dropbox can sync these files, but do not edit on two computers simultaneously. Conflicting file changes pause saving instead of overwriting.</p><p><strong>Previous browser-only edits:</strong> open the old file-based editor, download a JSON backup, then import it here once.</p><p>Download backup exports editable JSON, including private notes. Export story HTML makes a read-only story without notes; save it beside the images. Nothing is sent to an internet service.</p>';
+    $('help-content').innerHTML = '<p><strong>Everything saves automatically.</strong> Story Studio creates and updates <code>story-project.json</code> in this story’s folder, beside your images. Opening the story again from the Story Studio home page resumes that file without selecting or reconnecting anything. The dot in the top bar turns green once a change is on disk.</p><p>New top-level image and video files in the story folder appear within a few seconds. Subfolders, symbolic links and ZIP archives are not scanned. Image files are referenced, never copied or uploaded. Image descriptions you write are stored in the project, not in the image files.</p><p>Changes are saved shortly after you stop typing. A browser recovery copy is kept too; if Story Studio stops, leave the page open and start Story Studio again. Saving retries automatically.</p><p><code>story-project.json.bak</code> holds the previous saved version. Dropbox can sync these files, but do not edit on two computers simultaneously. Conflicting file changes pause saving instead of overwriting.</p><p><strong>Previous browser-only edits:</strong> open the old file-based editor, download a JSON backup, then import it here once.</p><p>Download backup exports editable JSON, including private notes. Export story HTML makes one read-only file with the pictures inside, without notes or comments. Export PDF does the same as a printable PDF. Nothing is sent to an internet service.</p>';
     try {
       server = await responseJSON(await fetch('api/bootstrap', {signal:AbortSignal.timeout(10000)}));
       if (server.version !== SERVER_VERSION) throw Object.assign(Error('outdated server'), {outdated:true});

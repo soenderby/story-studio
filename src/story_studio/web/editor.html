@@ -38,6 +38,7 @@
           <button id="settings-button" type="button">Settings…</button>
           <hr>
           <button id="export-html" type="button">Export story HTML</button>
+          <button id="export-pdf" type="button">Export PDF</button>
           <button id="download-project" type="button">Download backup (JSON)</button>
           <button id="open-project" type="button">Open project…</button>
           <button id="link-file" type="button">Link autosave file…</button>
@@ -204,7 +205,7 @@
     <div id="help-content"><p><strong>Browser autosave:</strong> every edit is saved to this browser’s local storage. Reopen this same <code>editor.html</code>, at the same location, in the same browser/profile to continue. Private browsing, clearing browser data, moving the editor or changing browsers can lose access to that copy. It is <strong>not a Dropbox backup</strong>.</p>
     <p><strong>Recommended: open your story from the Story Studio app</strong>, which saves to <code>story-project.json</code> in the story’s folder automatically. Without it, “Link autosave file…” (Chrome / Edge) writes changes to a JSON project file you choose. To resume after reopening, use “Open project…” on that file again. Do not edit the same project in multiple tabs or computers at once.</p>
     <p><strong>Portable backup:</strong> “Download backup” downloads a JSON copy containing chapters, text, captions, image order, image descriptions and private notes. Use “Open project…” to restore it.</p>
-    <p><strong>Finished story:</strong> “Read” shows the current draft. “Export story HTML” downloads a read-only page, without private notes. Save that HTML beside the original image files so its picture links work.</p>
+    <p><strong>Finished story:</strong> “Read” shows the current draft. “Export story HTML” downloads a read-only page with the pictures inside, so it works on its own. “Export PDF” downloads the same story as a PDF. Neither includes private notes or comments.</p>
     <p>Only top-level images and videos are listed. Your images and videos are never overwritten by the editor. ⋯ → Settings → “Hide all images and videos” replaces them with small placeholders everywhere.</p>
     </div><form method="dialog"><button class="primary">Got it</button></form>
   </dialog>

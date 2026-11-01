@@ -74,6 +74,8 @@ class ServerTest(TempHome):
         self.picks = []
         self.revealed = []
         self.quits = []
+        self.pdfs = []  # Pages sent for PDF export; each entry in self.pdf_results is returned or raised in turn.
+        self.pdf_results = []
         self.server = self.start_server()
         self.token = self.get('/api/stories')['token']
 
@@ -84,8 +86,15 @@ class ServerTest(TempHome):
                 raise result
             return result
 
+        def pdf_renderer(html):
+            self.pdfs.append(html)
+            result = self.pdf_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
         instance = server.make_server(self.home, 0, picker=picker, revealer=self.revealed.append,
-                                      on_quit=lambda: self.quits.append(True))
+                                      on_quit=lambda: self.quits.append(True), pdf_renderer=pdf_renderer)
         thread = threading.Thread(target=instance.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
         thread.start()
 

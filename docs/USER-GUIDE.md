@@ -16,7 +16,7 @@ Videos work everywhere pictures do: insert, drag, Replace, sizes (S/M/L/Wide), c
 
 - In the library, videos have a **▶** badge and a thumbnail taken from about one second in. New videos get the scene **Videos**.
 - In the editor, videos are silent and **play while you hover over them**. Click one to open it in the viewer, with sound and full controls.
-- In **Read**, Print and exported HTML, videos show normal play controls. Exported stories link to the video files the same way they link to images, so keep them beside the HTML.
+- In **Read**, Print and exported HTML, videos show normal play controls. Exported HTML contains the videos themselves (up to 200 MB each). In an exported PDF, each video is shown as its first frame.
 - **MP4 (H.264) and WebM play in every browser.** MOV files only play if they contain H.264 video. HEVC/H.265 (common on iPhones) may not play in Chrome or Firefox; convert those to MP4 first.
 - Video files are streamed, not loaded whole, so large clips are fine.
 
@@ -91,9 +91,13 @@ Leave notes on your own text while you write or reread, and mark passages to com
 
 **Download backup** (in the **⋯** menu) downloads editable project JSON, including private notes and image descriptions. **Import project…** replaces the current draft after confirmation and continues saving automatically. Keep backups before replacing a project or starting a blank story.
 
-**Export story HTML** downloads a read-only illustrated story without editor code or private notes. Save it **beside the original images** so relative picture links work. Alternatively use **Read → Print / PDF**. Image sizes (S/M/L/Wide) are kept in the export.
+**Export story HTML** (in the **⋯** menu) downloads a read-only illustrated story as **one file with the pictures inside**, so it works wherever you open or send it. Pictures are saved as high-quality WebP at most 2048 pixels on their longest side, which keeps the file much smaller than the originals.
 
-Projects and exports reference images by filename; they do not embed the image files. Keep the original images together with the project when moving it.
+**Export PDF** downloads the same story as an A4 PDF, each chapter starting on a new page. Story Studio prints it in the background with Microsoft Edge (or Google Chrome), which comes with Windows. If neither is found, use **Read → Print / PDF** and choose *Save as PDF*.
+
+Neither export includes private notes, the outline or comments. Image sizes (S/M/L/Wide) and picture groups are kept. Exporting takes a few seconds for a long story; a message shows the progress.
+
+Projects reference images by filename; they do not embed the image files. Keep the original images together with the project when moving it. (Exports are different: they contain the pictures.)
 
 ## Privacy and scope
 

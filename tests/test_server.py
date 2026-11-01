@@ -10,7 +10,7 @@ import time
 import unittest
 
 from helpers import ServerTest, legacy_js  # noqa: E402 (helpers puts src/ on sys.path)
-from story_studio import desktop, registry, server as module, story  # noqa: E402
+from story_studio import desktop, pdf, registry, server as module, story  # noqa: E402
 from story_studio.version import __version__  # noqa: E402
 
 sys.dont_write_bytecode = True
@@ -201,7 +201,7 @@ class OneStoryTest(ServerTest):
 
 class StoryListTest(ServerTest):
     def test_info_and_empty_list(self):
-        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 7, 'appVersion': __version__})
+        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 8, 'appVersion': __version__})
         listed = self.get('/api/stories')
         self.assertEqual((listed['stories'], listed['token']), ([], self.server.token))
         status, _, body = self.open('/')
@@ -348,6 +348,33 @@ class StoryListTest(ServerTest):
         self.post('/api/stories/pick-folder', {}, status=500)
         self.post('/api/stories/pick-folder', {'purpose': 'delete'}, status=400)
         self.assertEqual(self.picks, [])
+
+    def export_pdf(self, sid, html, status=200, token=None):
+        headers = {'Content-Type': 'text/html; charset=utf-8', 'X-Story-Token': self.token if token is None else token}
+        return self.open(f'/s/{sid}/api/export-pdf', data=html, headers=headers, method='POST')
+
+    def test_export_pdf_returns_the_rendered_document(self):
+        added = self.add(self.folder('Printable'))
+        page = '<!doctype html><h1>Æ story</h1><img src="data:image/png;base64,AAAA">'.encode()
+        self.pdf_results = [b'%PDF-1.7 fake', pdf.PdfUnavailable('no browser'), OSError('crashed')]
+        code, headers, body = self.export_pdf(added['id'], page)
+        self.assertEqual((code, headers['Content-Type'], body), (200, 'application/pdf', b'%PDF-1.7 fake'))
+        self.assertEqual(self.pdfs, [page])
+        self.assertEqual(self.export_pdf(added['id'], page)[0], 501)
+        self.assertEqual(self.export_pdf(added['id'], page)[0], 500)
+        self.assertEqual(self.export_pdf(added['id'], b'')[0], 413)
+        self.assertEqual(self.export_pdf('s0000000000000000', page)[0], 404)
+        self.assertEqual(self.export_pdf(added['id'], page, token='wrong')[0], 403)
+        self.assertEqual(len(self.pdfs), 3)
+
+    def test_only_one_pdf_export_at_a_time(self):
+        added = self.add(self.folder('Busy'))
+        self.server.pdf_lock.acquire()
+        try:
+            self.assertEqual(self.export_pdf(added['id'], b'<p>x</p>')[0], 409)
+        finally:
+            self.server.pdf_lock.release()
+        self.assertEqual(self.pdfs, [])
 
     def test_only_one_folder_dialog_at_a_time(self):
         self.server.pick_lock.acquire()
