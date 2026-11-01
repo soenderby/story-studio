@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### New
+
+- **Comments and markup.** Select words in your story and comment on them (**＋ Comment** or Alt+C), or comment on a whole paragraph. Label each comment Note, Change, Question or Keep, suggest new wording and accept it with one click, and resolve comments when they are done. A Comments panel lists them by chapter or for the whole story. Comments stay attached to their words while you edit, and are never part of Print or exported stories. In Read mode you can show them and comment as you read.
+- **Settings.** A new Settings dialog (⋯ → Settings in a story, Settings on the story list).
+- **Hide all images and videos** is now a setting, and it covers everything: story covers, the library, chapter thumbnails, the story, the viewer and Read mode. Hidden pictures become small labelled placeholders instead of empty space, and videos stop playing.
+
+### Compatibility
+
+- Projects with comments can be opened by 0.2.0, but saving them there would drop the comments. Update every computer that edits the same story.
+
 ## 0.2.0 (2026-10-31)
 
 The first installable release of Story Studio.

@@ -5,8 +5,8 @@ This is the contract that phases 1–5 build against (see [PLAN.md](PLAN.md)). C
 ## Versions
 
 - **App version**: semver string in `src/story_studio/version.py` (`__version__`). It is what releases and the updater compare.
-- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 sets it to **6**.
-- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version": 1`. Unchanged by this plan. A future format bump must migrate forward, write `story-project.v<old>.backup.json` first, and an older app opening a newer-format project must refuse to save instead of overwriting it.
+- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks.
+- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version": 1`. Unchanged by this plan. Optional fields added since, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below). A future format bump must migrate forward, write `story-project.v<old>.backup.json` first, and an older app opening a newer-format project must refuse to save instead of overwriting it.
 
 ## Files and folders
 
@@ -116,9 +116,24 @@ Unknown or missing story → `404 {"error"}` for the API and media routes. `edit
 
 Client flow: show a banner when `available && !skipped`. On install, poll `/api/update` every 500 ms. When `state == "installing"`, show "Updating Story Studio…" and poll `/api/info` every second until `appVersion` changes, then `location.reload()`.
 
+## Comments (API 7)
+
+A text block may have `"comments": [Comment]` (at most 500; omitted when empty). Comments exist only on text blocks.
+
+`Comment` = `{"id", "start", "end", "label", "note", "quote", "suggestion"?, "resolved"?, "created"?, "updated"?}`
+
+- `id`: shares the project's id namespace and rules (unique across chapters, blocks and comments).
+- `start`, `end`: integer offsets into the block's `text`, in **UTF-16 code units** (JavaScript string indices). Out-of-range values are clamped to `0 ≤ start ≤ end ≤ length`, never rejected. `start == end` means the commented words were deleted.
+- `label`: `"note"` (default), `"change"`, `"question"` or `"keep"`.
+- `note`: the comment text, may be empty (≤ 100 000 characters). `quote`: the words when the comment was made (≤ 100 000; the editor stores at most 2000).
+- `suggestion`: proposed replacement for the commented words (≤ 300 000). `resolved`: `true`, or absent.
+- `created`, `updated`: ISO 8601 strings (≤ 100 characters).
+
+Comments are never written to exported HTML.
+
 ## Browser storage (editor)
 
-- `localStorage` recovery key: `illustrated-story-studio:v1:<storyId>`. UI preferences stay global (`illustrated-story-studio:v1:ui`).
+- `localStorage` recovery key: `illustrated-story-studio:v1:<storyId>`. UI preferences stay global (`illustrated-story-studio:v1:ui`), as does Settings → Hide all images and videos (`illustrated-story-studio:v1:hide-images`, `"true"`/`"false"`, shared by the home page and the editor).
 - **Legacy adoption:** if the namespaced key is empty and the old un-namespaced key `illustrated-story-studio:v1` holds a project whose `id` equals this project's `id`, use it as this story's recovery copy, then delete the old key.
 - IndexedDB thumbnail keys are prefixed `<storyId>|`.
 

@@ -94,6 +94,45 @@ class StoryFolderTest(TempHome):
             with self.assertRaises(ValueError):
                 story.validate_project(project)
 
+    def commented(self, text, *comments):
+        project = json.loads(story.encode(story.BLANK_PROJECT))
+        project['chapters'][0]['blocks'] = [{'id': 't1', 'type': 'text', 'text': text, 'comments': list(comments)}]
+        return project
+
+    def test_comments_on_text_blocks_round_trip(self):
+        comment = {'id': 'c1', 'start': 4, 'end': 9, 'label': 'change', 'note': 'Too slow', 'quote': 'quick',
+                   'suggestion': 'swift', 'resolved': True, 'created': '2026-11-01T10:00:00.000Z',
+                   'updated': '2026-11-01T10:05:00.000Z', 'unknown': 'dropped'}
+        clean = story.validate_project(self.commented('The quick fox', comment))
+        expected = {k: v for k, v in comment.items() if k != 'unknown'}
+        self.assertEqual(clean['chapters'][0]['blocks'][0]['comments'], [expected])
+        self.assertEqual(story.validate_project(clean), clean)
+
+    def test_comment_defaults_and_empty_lists(self):
+        clean = story.validate_project(self.commented('Text', {'id': 'c1', 'start': 0, 'end': 4, 'resolved': False}))
+        self.assertEqual(clean['chapters'][0]['blocks'][0]['comments'],
+                         [{'id': 'c1', 'start': 0, 'end': 4, 'label': 'note', 'note': '', 'quote': ''}])
+        self.assertNotIn('comments', story.validate_project(self.commented('Text'))['chapters'][0]['blocks'][0])
+
+    def test_comment_offsets_are_clamped_in_javascript_string_units(self):
+        # '🦊' is one code point in Python but two UTF-16 units in the editor.
+        clean = story.validate_project(self.commented('a🦊b', {'id': 'c1', 'start': 1, 'end': 4},
+                                                      {'id': 'c2', 'start': 9, 'end': 3}, {'id': 'c3', 'start': -2, 'end': 99}))
+        self.assertEqual([(c['start'], c['end']) for c in clean['chapters'][0]['blocks'][0]['comments']], [(1, 4), (3, 3), (0, 4)])
+
+    def test_malformed_comments_are_refused(self):
+        good = {'id': 'c1', 'start': 0, 'end': 1}
+        for bad in ({**good, 'start': True}, {**good, 'end': 1.0}, {**good, 'label': 'shout'}, {**good, 'id': 'bad id'},
+                    {**good, 'id': 't1'}, {**good, 'note': 5}, {**good, 'resolved': 'yes'}, {**good, 'suggestion': None}, 'c1'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                story.validate_project(self.commented('Text', bad))
+        with self.assertRaises(ValueError):
+            story.validate_project(self.commented('Text', good, dict(good)))  # Duplicate id
+        project = self.commented('Text')
+        project['chapters'][0]['blocks'][0]['comments'] = {}
+        with self.assertRaises(ValueError):
+            story.validate_project(project)
+
 
 class PathsTest(TempHome):
     def test_app_home_uses_override_and_creates_it(self):

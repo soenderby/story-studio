@@ -55,9 +55,23 @@ The middle of the screen looks like the finished page. Controls appear only when
   - using **⋯ → Group with the picture above/below**.
   Hover a group for Row/Grid, size, **+ Add** and **⋯ → Ungroup**. Hover a single picture inside the group to move it, **Replace** it or take it out with **×**. A group left with one picture turns back into a normal picture. On phones, rows and grids show two pictures across.
 - **Deleting never asks.** Deleted blocks and chapters show an **Undo** button instead, and Ctrl+Z works too. Undo history does not survive a reload. Original image files are never deleted.
-- **Focus** hides both side panels. **☰** and **Images** toggle each one.
+- **Focus** hides all side panels. **☰**, **Images** and **Comments** toggle each one. Images and Comments share the right-hand side, so opening one closes the other.
 - **Read** shows the whole draft as a reader will see it, opened at the current chapter. Each chapter has an **Edit** button that jumps back to it.
 - The dot in the top bar is green when everything is on disk. Click it for details.
+
+## Comments and markup
+
+Leave notes on your own text while you write or reread, and mark passages to come back to.
+
+- **Comment on words**: select them in a text block and click the **＋ Comment** button that appears above the selection, or press **Alt+C**. With nothing selected, the whole paragraph at the cursor gets the comment. Every text block also has **Comment** in its hover toolbar.
+- **Labels**: each comment is a **Note**, **Change**, **Question** or **Keep**, shown as the highlight colour. The text of a comment is optional, so a label alone works as a coloured marker.
+- **Suggest wording**: propose a rewrite of the commented words. **Accept change** puts it into the story (Undo works); **Discard suggestion** drops it.
+- **Resolve** a comment when it is dealt with. Resolved comments lose their highlight and are hidden until you tick **Show resolved**. **Delete** removes a comment completely.
+- **The Comments panel** lists the comments of **This chapter** or the **Whole story**, in reading order. Click the quoted words on a card to jump to them in the text. Putting the cursor inside highlighted words highlights their card. The chapter list shows how many open comments each chapter has.
+- **Comments follow the words.** Edit freely: highlights move as you type, splitting and joining text blocks keeps them with their words, and moving a block to another chapter takes its comments along. If you delete all the commented words, the comment stays and shows the original words struck through. Duplicating a block does not copy its comments.
+- **Commenting while reading**: in **Read**, tick **Show comments** to see the highlights. Select words to comment on them, or click a highlight to open its comment. **Show this in the editor** jumps back to the spot.
+- Comments are **private**. They are saved in `story-project.json` and in downloaded backups, but never appear in Print or exported HTML, and appear in Read only when you turn them on.
+- ⋯ → **Settings** → **Highlight commented text** turns the highlights off while writing, if you prefer a clean page. The Comments panel still works.
 
 ### Keyboard shortcuts
 
@@ -67,10 +81,11 @@ The middle of the screen looks like the finished page. Controls appear only when
 | Backspace at the start of a text block | Join it with the text above |
 | Alt+↑ / Alt+↓ | Move the current block |
 | Alt+I | Pick an image to insert at the cursor |
+| Alt+C | Comment on the selected words (or the paragraph at the cursor). Elsewhere: show / hide comments |
 | Alt+PgUp / Alt+PgDn | Previous / next chapter |
 | / | Search images |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo (in a text field these undo typing first) |
-| Esc | Close the viewer, the enlarged library or a menu |
+| Esc | Close the viewer, the enlarged library, a menu or a dialog |
 
 ## Backups, import and finished stories
 
@@ -84,6 +99,6 @@ Projects and exports reference images by filename; they do not embed the image f
 
 The server listens only on **127.0.0.1**, not on your LAN or the internet. It serves only the editor assets and the top-level images and videos of your story folder. Project writes are restricted to the designated autosave/backup files, use a per-server request token and reject cross-site writes. There is no general filesystem API or directory listing.
 
-**Hide images** hides pictures and videos in the editor and preview, for working in public.
+**Settings → Hide all images and videos** (the **⋯** menu in a story, or **Settings** on the story list) hides every picture and video in Story Studio: story covers, the image library, chapter thumbnails, the story itself, the viewer and Read mode. Each one is replaced by a small placeholder with its description, so you can still write and arrange the story, and videos stop playing. The setting is kept in the browser and applies to all stories. Exported HTML always includes the pictures.
 
 Your images and videos are never modified or deleted by editing.

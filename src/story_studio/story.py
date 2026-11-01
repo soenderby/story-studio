@@ -19,6 +19,8 @@ MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | set(VIDEO_TYPES)
 IMAGE_SIZES = {'small', 'medium', 'large', 'wide'}
 GROUP_LAYOUTS = {'row', 'grid'}
 MAX_GROUP = 12
+COMMENT_LABELS = {'note', 'change', 'question', 'keep'}
+MAX_COMMENTS = 500  # per text block
 LEGACY_DATA = 'editor-data.js'  # Older single-story installs kept image descriptions here, beside the media.
 MAX_BODY = 10_000_000
 PROJECT_NAME = 'story-project.json'
@@ -41,6 +43,44 @@ def directory_key(root):
     if match:
         path = f'{match[1]}:{match[2] or "/"}'
     return hashlib.sha256(path.rstrip('/').lower().encode()).hexdigest()
+
+
+def utf16_length(value):
+    """String length as the editor's JavaScript counts it, so comment offsets mean the same on both sides."""
+    return len(value.encode('utf-16-le')) // 2
+
+
+def clean_comments(value, block_text, text, unique_id):
+    """A text block's comments. Offsets that no longer fit the text are clamped, never rejected:
+    they only place a highlight, and the comment itself must not be lost."""
+    if not isinstance(value, list) or len(value) > MAX_COMMENTS:
+        raise ValueError(f'A text block can hold at most {MAX_COMMENTS} comments.')
+    length, result = utf16_length(block_text), []
+    for comment in value:
+        if not isinstance(comment, dict):
+            raise ValueError('Invalid comment.')
+        offsets = [comment.get('start'), comment.get('end')]
+        if any(type(n) is not int for n in offsets):
+            raise ValueError('Invalid comment position.')
+        end = min(max(offsets[1], 0), length)
+        start = min(max(offsets[0], 0), end)
+        label = comment.get('label', 'note')
+        if not isinstance(label, str) or label not in COMMENT_LABELS:
+            raise ValueError('Unknown comment label.')
+        item = {'id': unique_id(comment.get('id')), 'start': start, 'end': end, 'label': label,
+                'note': text(comment.get('note', ''), 100000), 'quote': text(comment.get('quote', ''), 100000)}
+        if 'suggestion' in comment:
+            item['suggestion'] = text(comment['suggestion'], 300000)
+        if 'resolved' in comment:
+            if not isinstance(comment['resolved'], bool):
+                raise ValueError('Invalid comment state.')
+            if comment['resolved']:
+                item['resolved'] = True
+        for stamp in ('created', 'updated'):
+            if stamp in comment:
+                item[stamp] = text(comment[stamp], 100)
+        result.append(item)
+    return result
 
 
 def validate_project(value):
@@ -80,6 +120,10 @@ def validate_project(value):
             item = {'id': unique_id(block.get('id')), 'type': block.get('type')}
             if item['type'] == 'text':
                 item['text'] = text(block.get('text'))
+                if 'comments' in block:
+                    comments = clean_comments(block['comments'], item['text'], text, unique_id)
+                    if comments:
+                        item['comments'] = comments
             elif item['type'] == 'image' and safe_media(block.get('file')):
                 item.update(file=block['file'], caption=text(block.get('caption'), 300000))
             elif item['type'] == 'gallery':

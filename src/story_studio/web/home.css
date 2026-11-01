@@ -1,7 +1,6 @@
 /* Home page (story list). Builds on editor.css: tokens, buttons, top bar, notice, update banner. */
 body.home { min-height: 100vh; display: flex; flex-direction: column; }
 .home .topbar { position: static; }
-.home-toggle { display: inline-flex; align-items: center; gap: .35rem; font-size: .8rem; color: var(--muted); cursor: pointer; }
 .home-main { width: 100%; max-width: 1080px; margin: 0 auto; padding: 2rem 1.5rem 4rem; flex: 1 0 auto; }
 .home-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .8rem 1rem; margin-bottom: 1.4rem; }
 .home-heading h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 0; }

@@ -9,7 +9,8 @@
   const UI_KEY = BASE_KEY + ':ui', HIDE_KEY = BASE_KEY + ':hide-images';
   const SIZES = ['small', 'medium', 'large', 'wide'];
   const LAYOUTS = ['row', 'grid'], MAX_GROUP = 12;
-  const SERVER_VERSION = 6; // Multi-story app: this editor runs under /s/<id>/ with relative API URLs.
+  const SERVER_VERSION = 7; // 7: text blocks can carry comments. The editor runs under /s/<id>/ with relative API URLs.
+  const COMMENT_LABELS = {note:'Note', change:'Change', question:'Question', keep:'Keep'}, MAX_COMMENTS = 500;
   const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i;
   const VIDEO_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#2b302d"/><path d="M6 4.5v7l5.5-3.5z" fill="#fff"/></svg>');
   const SIZE_LABELS = {small:'S', medium:'M', large:'L', wide:'Wide'};
@@ -38,7 +39,9 @@
   let pendingFocus = null, pendingScroll = null;
   let lightbox = {list:[], index:0, from:'library'};
   let fileState = 'idle', savedAt = '';
-  const ui = Object.assign({chapters:true, library:true, thumb:'m', sort:'newest', libraryWidth:400}, readUI());
+  const ui = Object.assign({chapters:true, library:true, comments:false, commentScope:'chapter', commentMarks:true, readComments:false,
+    thumb:'m', sort:'newest', libraryWidth:400}, readUI());
+  let activeComment = null, showResolved = false, commentsTimer = null;
 
   function readUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {} }
@@ -143,6 +146,24 @@
     return typeof name === 'string' && name.length <= 500 && !/[\\/\x00-\x1f]/.test(name) && (/\.(png|jpe?g|gif|webp|bmp)$/i.test(name) || VIDEO_PATTERN.test(name));
   }
   function isVideo(file) { return VIDEO_PATTERN.test(file); }
+  // Same rules as story.py: offsets that no longer fit the text are clamped, never rejected, so a comment is not lost.
+  function validComments(list, body, text, id) {
+    if (!Array.isArray(list) || list.length > MAX_COMMENTS) throw Error(`A text block can hold at most ${MAX_COMMENTS} comments.`);
+    return list.map(c => {
+      if (!c || typeof c !== 'object' || !Number.isInteger(c.start) || !Number.isInteger(c.end)) throw Error('The project contains an invalid comment.');
+      const label = c.label ?? 'note';
+      if (typeof label !== 'string' || !Object.hasOwn(COMMENT_LABELS, label)) throw Error('Unknown comment label.');
+      const end = Math.min(Math.max(c.end, 0), body.length), start = Math.min(Math.max(c.start, 0), end);
+      const clean = {id:id(c.id), start, end, label, note:text(c.note ?? '', 100000), quote:text(c.quote ?? '', 100000)};
+      if (c.suggestion !== undefined) clean.suggestion = text(c.suggestion, 300000);
+      if (c.resolved !== undefined) {
+        if (typeof c.resolved !== 'boolean') throw Error('The project contains an invalid comment.');
+        if (c.resolved) clean.resolved = true;
+      }
+      ['created', 'updated'].forEach(key => { if (c[key] !== undefined) clean[key] = text(c[key], 100); });
+      return clean;
+    });
+  }
   function validate(raw) {
     if (!raw || raw.format !== 'illustrated-story-project' || raw.version !== 1) throw Error('This is not a supported Story Studio project (version 1).');
     const text = (value, max = 2000000) => {
@@ -167,7 +188,14 @@
           blocks: chapter.blocks.map(block => {
             if (++count > 10000 || !block) throw Error('Too many blocks, or an invalid block.');
             const blockId = id(block.id);
-            if (block.type === 'text') return {id: blockId, type: 'text', text: text(block.text)};
+            if (block.type === 'text') {
+              const clean = {id: blockId, type: 'text', text: text(block.text)};
+              if (block.comments !== undefined) {
+                const list = validComments(block.comments, clean.text, text, id);
+                if (list.length) clean.comments = list;
+              }
+              return clean;
+            }
             let picture;
             if (block.type === 'gallery') {
               if (!Array.isArray(block.items) || block.items.length < 2 || block.items.length > MAX_GROUP) throw Error(`A picture group must contain 2–${MAX_GROUP} pictures.`);
@@ -392,7 +420,10 @@
     const images = project.chapters.reduce((n, x) => n + imageCount(x), 0);
     $('story-stats').textContent = `${project.chapters.length} chapters · ${images} images · ${total.toLocaleString()} words · about ${Math.max(1, Math.round(total / 220))} min read`;
   }
-  function chapterStats(c) { return `${imageCount(c)} images · ${chapterWords(c)} words`; }
+  function chapterStats(c) {
+    const open = openComments(c);
+    return `${imageCount(c)} images · ${chapterWords(c)} words` + (open ? ` · ${open} comment${open === 1 ? '' : 's'}` : '');
+  }
   function renderChapters() {
     $('chapter-list').innerHTML = project.chapters.map((c, index) => {
       const files = c.blocks.flatMap(blockFiles).slice(0, 5);
@@ -440,9 +471,13 @@
   // Videos stay muted in the editor and play while hovered; the viewer and the finished story give them full controls.
   function mediaHTML(file, attrs) {
     const title = esc(metadata(file).title), src = esc(imageURL(file));
-    return isVideo(file)
+    return (isVideo(file)
       ? `<video data-source-file="${esc(file)}" src="${src}" aria-label="${title}" title="${title} — hover to play, click to enlarge" muted loop playsinline preload="metadata" data-hover-play ${attrs}></video>`
-      : `<img data-source-file="${esc(file)}" src="${src}" alt="${title}" title="${title} — click to enlarge" loading="lazy" decoding="async" ${attrs}>`;
+      : `<img data-source-file="${esc(file)}" src="${src}" alt="${title}" title="${title} — click to enlarge" loading="lazy" decoding="async" ${attrs}>`) + hiddenMediaHTML(file);
+  }
+  // Stands in for a picture while "Hide all images and videos" is on (CSS shows it only then).
+  function hiddenMediaHTML(file) {
+    return `<span class="media-hidden" data-hidden-for="${esc(file)}"><span class="media-hidden-kind">${isVideo(file) ? 'Video' : 'Picture'} hidden</span> ${esc(metadata(file).title)}</span>`;
   }
   function groupHTML(block) {
     const n = block.items.length;
@@ -468,6 +503,7 @@
         ${picture ? sep + SIZES.map(s => `<button type="button" class="size-btn" data-size="${s}" aria-pressed="${s === size}" title="${SIZE_NAMES[s]}">${SIZE_LABELS[s]}</button>`).join('') : ''}
         ${image ? sep + '<button type="button" data-action="replace" title="Choose a different picture">Replace</button>' : ''}
         ${gallery ? sep + `<button type="button" data-action="group-add" title="Add pictures to this group" ${block.items.length >= MAX_GROUP ? 'disabled' : ''}>+ Add</button>` : ''}
+        ${picture ? '' : `<button type="button" data-action="comment" title="Comment on the selected words, or on the paragraph at the cursor (Alt+C)">Comment${commentsOf(block).some(c => !c.resolved) ? ` <span class="count">${commentsOf(block).filter(c => !c.resolved).length}</span>` : ''}</button>`}
         ${sep}
         <div class="menu-wrap"><button type="button" data-menu aria-expanded="false" aria-label="More block actions">⋯</button>
           <div class="menu" hidden>
@@ -481,7 +517,7 @@
         </div>
       </div>
       <div class="block-body">${gallery ? groupHTML(block) : image ? `<figure><div class="frame">${mediaHTML(block.file, `${ratio} data-view-image`)}</div><textarea class="caption" data-edit="caption" rows="1" placeholder="Add a caption…" aria-label="Caption">${esc(block.caption)}</textarea></figure>`
-        : `<textarea class="prose" data-edit="text" rows="3" aria-label="Story text, block ${index + 1}" placeholder="Write here. Leave a blank line between paragraphs…">${esc(block.text)}</textarea>`}</div>
+        : `<div class="prose-wrap"><div class="prose-marks" aria-hidden="true">${marksHTML(block)}</div><textarea class="prose" data-edit="text" rows="3" aria-label="Story text, block ${index + 1}" placeholder="Write here. Leave a blank line between paragraphs…">${esc(block.text)}</textarea></div>`}</div>
     </article>`;
   }
   function captureFocus() {
@@ -516,7 +552,7 @@
     $('prev-chapter').textContent = prev ? '← ' + chapterName(prev) : '';
     $('next-chapter').textContent = next ? chapterName(next) + ' →' : '+ New chapter';
     $('notes-toggle').classList.toggle('has-notes', !!c.notes.trim());
-    renderChapters(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll();
+    renderChapters(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll(); renderComments();
     if (focus) {
       const article = $('blocks').querySelector(`[data-block="${CSS.escape(focus.block)}"]`);
       let element = article?.querySelector(focus.selector);
@@ -613,18 +649,27 @@
       card.querySelector('.library-thumb').title = info.title + '\nClick to enlarge · drag into the story';
     }
     document.querySelectorAll(`#blocks img[data-source-file="${CSS.escape(file)}"]`).forEach(img => { img.alt = info.title; });
+    document.querySelectorAll(`.media-hidden[data-hidden-for="${CSS.escape(file)}"]`).forEach(span => { span.lastChild.textContent = ' ' + info.title; });
   }
   function renderLibraryLayout() {
     document.body.classList.toggle('no-chapters', !ui.chapters);
     document.body.classList.toggle('no-library', !ui.library && !document.body.classList.contains('library-expanded'));
+    document.body.classList.toggle('show-comments', ui.comments);
+    document.body.classList.toggle('no-comment-marks', !ui.commentMarks);
     $('toggle-chapters').setAttribute('aria-pressed', String(ui.chapters));
     $('toggle-library').setAttribute('aria-pressed', String(ui.library));
-    $('focus-toggle').setAttribute('aria-pressed', String(!ui.chapters && !ui.library));
+    $('toggle-comments').setAttribute('aria-pressed', String(ui.comments));
+    $('focus-toggle').setAttribute('aria-pressed', String(!ui.chapters && !ui.library && !ui.comments));
     document.documentElement.style.setProperty('--lib-w', ui.libraryWidth + 'px');
     const base = {s:88, m:120, l:180}[ui.thumb] || 120;
     $('image-library').style.setProperty('--thumb-base', base + 'px');
     document.querySelectorAll('[data-thumb-size]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.thumbSize === ui.thumb)));
     $('image-sort').value = ui.sort;
+  }
+  function toggleComments(on = !ui.comments) {
+    ui.comments = on;
+    if (on) { ui.library = false; if (document.body.classList.contains('library-expanded')) setLibraryExpanded(false); }
+    saveUI(); renderLibraryLayout(); renderComments();
   }
   function setLibraryExpanded(on) {
     document.body.classList.toggle('library-expanded', on);
@@ -699,9 +744,7 @@
       const blocks = chapter().blocks;
       if (point.split) {
         const block = blocks.find(b => b.id === point.split.id);
-        const after = block.text.slice(point.split.pos).replace(/^\s+/, '');
-        block.text = block.text.slice(0, point.split.pos).replace(/\s+$/, '');
-        blocks.splice(point.index, 0, {id:uid(), type:'text', text:after});
+        blocks.splice(point.index, 0, splitTextBlock(block, point.split.pos));
       }
       blocks.splice(point.index, 0, ...made);
       target = {chapter:activeChapter, index:point.index + made.length}; caret = null;
@@ -824,17 +867,17 @@
   function removeBlock(id) {
     const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
     const kind = blocks[index].type === 'image' && isVideo(blocks[index].file) ? 'Video' : {image:'Picture', gallery:'Picture group', text:'Text'}[blocks[index].type];
+    const notes = commentsOf(blocks[index]).length;
     mutate(() => { blocks.splice(index, 1); if (caret?.block === id) caret = null; target = null; });
-    notify(`${kind} deleted. Original image files are never deleted.`, false, undoAction);
+    notify(notes ? `${kind} deleted, with its ${notes} comment${notes === 1 ? '' : 's'}.` : `${kind} deleted. Original image files are never deleted.`, false, undoAction);
   }
   function splitText(id, pos) {
     const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
-    const block = blocks[index], next = uid();
-    pendingFocus = {block:next, selector:'textarea', start:0};
+    const block = blocks[index];
     mutate(() => {
-      const after = block.text.slice(pos).replace(/^\s+/, '');
-      block.text = block.text.slice(0, pos).replace(/\s+$/, '');
-      blocks.splice(index + 1, 0, {id:next, type:'text', text:after});
+      const after = splitTextBlock(block, pos);
+      blocks.splice(index + 1, 0, after);
+      pendingFocus = {block:after.id, selector:'textarea', start:0};
     });
   }
   function joinWithPrevious(id) {
@@ -843,7 +886,13 @@
     if (previous?.type === 'text') {
       const head = previous.text.replace(/\s+$/, ''), joiner = head && block.text ? '\n\n' : '';
       pendingFocus = {block:previous.id, selector:'textarea', start:head.length + joiner.length};
-      mutate(() => { previous.text = head + joiner + block.text; blocks.splice(index, 1); });
+      mutate(() => {
+        const shift = head.length + joiner.length;
+        const kept = commentsOf(previous).map(c => { const end = Math.min(c.end, head.length); return {...c, start:Math.min(c.start, end), end}; });
+        const joined = [...kept, ...commentsOf(block).map(c => ({...c, start:c.start + shift, end:c.end + shift}))];
+        previous.text = head + joiner + block.text; blocks.splice(index, 1);
+        if (joined.length) previous.comments = joined;
+      });
       return true;
     }
     if (!block.text) {
@@ -893,7 +942,7 @@
     if (video) {
       if ($('lb-video').dataset.sourceFile !== entry.file) {
         $('lb-video').src = imageURL(entry.file); $('lb-video').dataset.sourceFile = entry.file;
-        $('lb-video').play().catch(() => {});
+        if (!document.body.classList.contains('hide-images')) $('lb-video').play().catch(() => {});
       }
       $('lb-video').setAttribute('aria-label', info.title);
     } else {
@@ -915,6 +964,12 @@
     $('lb-where').hidden = lightbox.from === 'chapter';
     updateInsertInfo();
   }
+  // "Hide all images and videos" (Settings). Global, shared with the home page through localStorage.
+  function applyHideImages(on) {
+    $('setting-hide-images').checked = on;
+    document.body.classList.toggle('hide-images', on);
+    if (on) document.querySelectorAll('video').forEach(video => video.pause());
+  }
   function stopLightboxVideo() {
     const video = $('lb-video'); if (!video.dataset.sourceFile) return;
     video.pause(); video.removeAttribute('src'); delete video.dataset.sourceFile; video.load();
@@ -922,6 +977,304 @@
   function stepLightbox(delta) {
     const next = lightbox.index + delta;
     if (next >= 0 && next < lightbox.list.length) { lightbox.index = next; renderLightbox(); }
+  }
+
+  /* ---------- Comments ----------
+     A comment belongs to one text block: {id, start, end, label, note, quote, suggestion?, resolved?, created, updated?}.
+     start/end are string offsets into block.text and follow the words as the text is edited. A range whose words
+     were all deleted shrinks to nothing; the comment stays, showing its original quote. */
+  function commentsOf(b) { return b?.type === 'text' ? b.comments || [] : []; }
+  function openComments(c) { return c.blocks.reduce((n, b) => n + commentsOf(b).filter(x => !x.resolved).length, 0); }
+  function findComment(id) {
+    for (const c of project.chapters) for (const b of c.blocks) {
+      const comment = commentsOf(b).find(x => x.id === id);
+      if (comment) return {chapter:c, block:b, comment};
+    }
+    return null;
+  }
+  function dropEmptyComments(block) { if (block.comments && !block.comments.length) delete block.comments; }
+  // The single edit that turns `before` into `after`. The caret (where typing ended) settles ambiguous cases such as "aa" → "aaa".
+  function textChange(before, after, caret = after.length) {
+    let from = 0, tail = 0;
+    const most = Math.min(before.length, after.length, caret);
+    while (from < most && before[from] === after[from]) from++;
+    const room = Math.min(before.length - from, after.length - Math.max(from, caret));
+    while (tail < room && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+    return {from, removedEnd:before.length - tail, inserted:after.length - tail - from};
+  }
+  const wordChar = ch => !!ch && /[\p{L}\p{N}'’-]/u.test(ch);
+  // Moves every comment of `block` for a change at [from, removedEnd) replaced by `inserted` characters of `after`.
+  // Typing right after (or right before) a commented word grows the comment only when it continues that word.
+  function shiftComments(block, {from, removedEnd, inserted}, after) {
+    const delta = inserted - (removedEnd - from), insertOnly = removedEnd === from && inserted > 0;
+    commentsOf(block).forEach(c => {
+      const empty = c.start === c.end;
+      let start = c.start < from ? c.start : c.start >= removedEnd ? c.start + delta : from;
+      let end = c.end <= from ? c.end : c.end >= removedEnd ? c.end + delta : from + inserted;
+      if (insertOnly && !empty) {
+        if (c.end === from && wordChar(after[from - 1]) && wordChar(after[from])) end = from + inserted;
+        if (c.start === from && wordChar(after[from + inserted - 1]) && wordChar(after[from + inserted])) start = from;
+      }
+      c.start = start; c.end = Math.max(start, end);
+    });
+  }
+  // Splits a text block's text at pos the way Ctrl+Enter does; comments go with their words.
+  function splitTextBlock(block, pos) {
+    const head = block.text.slice(0, pos).replace(/\s+$/, ''), rest = block.text.slice(pos);
+    const skip = rest.length - rest.replace(/^\s+/, '').length, offset = pos + skip;
+    const after = {id:uid(), type:'text', text:rest.slice(skip)}, keep = [], moved = [];
+    commentsOf(block).forEach(c => {
+      if (c.start >= pos) {
+        const start = Math.max(0, c.start - offset); moved.push({...c, start, end:Math.max(start, c.end - offset)});
+      } else {
+        const end = Math.min(c.end, head.length); keep.push({...c, start:Math.min(c.start, end), end});
+      }
+    });
+    block.text = head;
+    if (block.comments) { block.comments = keep; dropEmptyComments(block); }
+    if (moved.length) after.comments = moved;
+    return after;
+  }
+  // The paragraph (text between blank lines) around pos, without its surrounding whitespace.
+  function paragraphAt(text, pos) {
+    const gap = /\n[ \t]*\n/g; let start = 0, end = text.length, m;
+    while ((m = gap.exec(text))) {
+      if (m.index >= pos) { end = m.index; break; }
+      start = m.index + m[0].length;
+    }
+    while (start < end && /\s/.test(text[start])) start++;
+    while (end > start && /\s/.test(text[end - 1])) end--;
+    return [start, end];
+  }
+  // Highlights for one text block. Overlapping comments nest; the narrowest one decides the colour.
+  function marksHTML(block) {
+    const text = block.text, list = commentsOf(block).filter(c => !c.resolved && c.end > c.start);
+    if (!list.length) return esc(text);
+    const cuts = [...new Set([0, text.length, ...list.flatMap(c => [c.start, c.end])])].sort((a, b) => a - b);
+    let html = '';
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const a = cuts[i], b = cuts[i + 1], piece = esc(text.slice(a, b));
+      const over = list.filter(c => c.start <= a && c.end >= b).sort((x, y) => (x.end - x.start) - (y.end - y.start));
+      if (!over.length) { html += piece; continue; }
+      const ids = over.map(c => c.id).join(' '), active = over.some(c => c.id === activeComment);
+      html += `<mark class="cm cm-${over[0].label}${over.length > 1 ? ' cm-overlap' : ''}${active ? ' cm-active' : ''}" data-comments="${esc(ids)}">${piece}</mark>`;
+    }
+    return html;
+  }
+  function renderMarks(article, block) {
+    const mirror = article?.querySelector('.prose-marks');
+    if (mirror) mirror.innerHTML = marksHTML(block);
+  }
+  function commentAtCaret(block, pos) {
+    const here = commentsOf(block).filter(c => !c.resolved && c.start <= pos && pos <= c.end && c.end > c.start);
+    return here.sort((x, y) => (x.end - x.start) - (y.end - y.start))[0]?.id || null;
+  }
+  function setActiveComment(id, reveal = true) {
+    if (activeComment === id) return;
+    activeComment = id;
+    document.querySelectorAll('mark.cm-active').forEach(m => m.classList.remove('cm-active'));
+    document.querySelectorAll('.comment-card.active').forEach(card => card.classList.remove('active'));
+    if (!id) return;
+    document.querySelectorAll(`mark[data-comments~="${CSS.escape(id)}"]`).forEach(m => m.classList.add('cm-active'));
+    const card = $('comment-list').querySelector(`[data-comment-id="${CSS.escape(id)}"]`);
+    card?.classList.add('active');
+    if (reveal && card) card.scrollIntoView({block:'nearest'});
+  }
+  function addComment(blockId, start, end, inDialog = false) {
+    const found = project.chapters.flatMap(c => c.blocks.map(b => ({c, b}))).find(x => x.b.id === blockId);
+    if (!found || found.b.type !== 'text' || blocked) return;
+    const block = found.b;
+    if (start === end) [start, end] = paragraphAt(block.text, start);
+    if (start === end) { notify('Write some text first, then comment on it.'); return; }
+    if (commentsOf(block).length >= MAX_COMMENTS) { notify(`A text block can hold at most ${MAX_COMMENTS} comments.`, true); return; }
+    const comment = {id:uid(), start, end, label:'note', note:'', quote:block.text.slice(start, end).slice(0, 2000), created:new Date().toISOString()};
+    activeComment = comment.id;
+    mutate(() => { (block.comments ||= []).push(comment); });
+    if (inDialog) { openCommentDialog(comment.id); return; }
+    if (!ui.comments) { ui.comments = true; ui.library = false; saveUI(); renderLibraryLayout(); renderComments(); }
+    const note = $('comment-list').querySelector(`[data-comment-id="${CSS.escape(comment.id)}"] [data-comment-field="note"]`);
+    note?.focus(); note?.scrollIntoView({block:'nearest'});
+  }
+  function commentFromTextarea(textarea) {
+    const article = textarea?.closest('[data-block]'); if (!article) return;
+    addComment(article.dataset.block, textarea.selectionStart, textarea.selectionEnd);
+  }
+  function goToComment(id) {
+    const found = findComment(id); if (!found) return;
+    if ($('comment-dialog').open) $('comment-dialog').close();
+    if (previewing) showPreview(false);
+    activeChapter = found.chapter.id; view = 'chapter'; target = null;
+    activeComment = id;
+    const {start, end} = found.comment;
+    pendingFocus = {block:found.block.id, selector:'[data-edit="text"]', start, end};
+    renderEditor();
+    activeComment = null; setActiveComment(id);
+    const article = $('blocks').querySelector(`[data-block="${CSS.escape(found.block.id)}"]`);
+    (article?.querySelector(`mark[data-comments~="${CSS.escape(id)}"]`) || article)?.scrollIntoView({block:'center', behavior:'smooth'});
+  }
+  function commentAction(id, action) {
+    const found = findComment(id); if (!found || blocked) return;
+    const {block, comment} = found, now = new Date().toISOString();
+    if (action === 'resolve') {
+      mutate(() => { if (comment.resolved) delete comment.resolved; else comment.resolved = true; comment.updated = now; });
+      if (comment.resolved && !showResolved) notify('Comment resolved. Tick “Show resolved” to see it again.', false, undoAction);
+    } else if (action === 'delete') {
+      mutate(() => { block.comments.splice(block.comments.indexOf(comment), 1); dropEmptyComments(block); if (activeComment === id) activeComment = null; });
+      if ($('comment-dialog').open) $('comment-dialog').close();
+      notify('Comment deleted.', false, undoAction);
+    } else if (action === 'suggest') {
+      mutate(() => { comment.suggestion = block.text.slice(comment.start, comment.end); comment.updated = now; });
+      const field = document.querySelector(`[data-comment-id="${CSS.escape(id)}"] [data-comment-field="suggestion"]`);
+      field?.focus(); field?.select();
+    } else if (action === 'accept') {
+      const replacement = comment.suggestion ?? '';
+      mutate(() => {
+        const after = block.text.slice(0, comment.start) + replacement + block.text.slice(comment.end);
+        const change = {from:comment.start, removedEnd:comment.end, inserted:replacement.length};
+        const others = block.comments.filter(c => c !== comment);
+        shiftComments({type:'text', comments:others}, change, after);
+        block.text = after;
+        comment.end = comment.start + replacement.length; delete comment.suggestion;
+        comment.resolved = true; comment.updated = now;
+        if (!comment.note.trim()) block.comments.splice(block.comments.indexOf(comment), 1);
+        dropEmptyComments(block);
+      });
+      notify('Change applied to the story text.', false, undoAction);
+    } else if (action === 'reject') {
+      mutate(() => { delete comment.suggestion; comment.updated = now; });
+    }
+  }
+  function setCommentField(id, field, value) {
+    const found = findComment(id); if (!found || blocked) return;
+    history('comment:' + id + field);
+    found.comment[field] = value; found.comment.updated = new Date().toISOString();
+    changed(false);
+  }
+  function commentDate(iso) {
+    const date = iso ? new Date(iso) : null;
+    if (!date || isNaN(date)) return '';
+    return date.toDateString() === new Date().toDateString()
+      ? date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : date.toLocaleDateString([], {day:'numeric', month:'short'});
+  }
+  function commentCardHTML({chapter: c, block, comment}, withChapter = false) {
+    const current = block.text.slice(comment.start, comment.end);
+    const quote = current ? esc(current.length > 400 ? current.slice(0, 400) + '…' : current)
+      : `<del>${esc(comment.quote.slice(0, 400))}</del> <span class="comment-gone">the commented words were deleted</span>`;
+    const where = withChapter ? `Ch. ${project.chapters.indexOf(c) + 1} · ${esc(chapterName(c))}` : '';
+    const suggestion = comment.suggestion !== undefined ? `<div class="comment-suggestion">
+        <label><span class="comment-sub">Replace with</span><textarea data-comment-field="suggestion" rows="1" placeholder="New wording (leave empty to delete the words)…">${esc(comment.suggestion)}</textarea></label>
+        <div class="comment-row"><button type="button" class="primary" data-comment-action="accept">Accept change</button><button type="button" data-comment-action="reject">Discard suggestion</button></div>
+      </div>` : '';
+    return `<article class="comment-card label-${comment.label}${comment.resolved ? ' resolved' : ''}${comment.id === activeComment ? ' active' : ''}" data-comment-id="${esc(comment.id)}">
+      <button type="button" class="comment-quote" data-comment-go title="Show in the text">${quote}</button>
+      <div class="comment-labels" role="group" aria-label="Label">${Object.entries(COMMENT_LABELS).map(([key, name]) => `<button type="button" class="label-chip label-${key}" data-comment-label="${key}" aria-pressed="${key === comment.label}">${name}</button>`).join('')}</div>
+      <textarea class="comment-note" data-comment-field="note" rows="1" placeholder="Write a comment… (optional)" aria-label="Comment">${esc(comment.note)}</textarea>
+      ${suggestion}
+      <div class="comment-footer"><span class="comment-meta">${where ? where + ' · ' : ''}${commentDate(comment.updated || comment.created)}${comment.resolved ? ' · resolved' : ''}</span>
+        <span class="comment-actions">${comment.suggestion === undefined && !comment.resolved ? '<button type="button" class="quiet" data-comment-action="suggest" title="Propose new wording you can accept later">Suggest wording</button>' : ''}<button type="button" data-comment-action="resolve">${comment.resolved ? 'Reopen' : 'Resolve'}</button><button type="button" class="quiet danger" data-comment-action="delete" aria-label="Delete comment" title="Delete comment">Delete</button></span></div>
+    </article>`;
+  }
+  // Re-render keeping focus and the caret in whichever comment field was being edited.
+  function keepCommentFocus(root, render) {
+    const active = document.activeElement, card = root.contains(active) ? active.closest('[data-comment-id]') : null;
+    const field = active?.dataset?.commentField, start = active?.selectionStart, end = active?.selectionEnd;
+    render();
+    if (!card) return;
+    const again = root.querySelector(`[data-comment-id="${CSS.escape(card.dataset.commentId)}"] ${field ? `[data-comment-field="${field}"]` : '.comment-quote'}`);
+    if (!again) return;
+    again.focus({preventScroll:true});
+    if (field && start !== undefined) again.setSelectionRange(start, end);
+  }
+  function renderComments() {
+    if (!project) return;
+    const open = project.chapters.reduce((n, c) => n + openComments(c), 0);
+    $('comments-count').textContent = open; $('comments-count').hidden = !open;
+    if ($('comment-dialog').open) renderCommentDialog();
+    if (previewing) refreshPreviewMarks();
+    if (!ui.comments) return;
+    const story = ui.commentScope === 'story', chapters = story ? project.chapters : [chapter()];
+    document.querySelectorAll('[data-comment-scope]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.commentScope === ui.commentScope)));
+    $('comments-resolved').checked = showResolved;
+    let shown = 0, resolvedHidden = 0;
+    const html = chapters.map(c => {
+      const items = c.blocks.flatMap(b => commentsOf(b).map(comment => ({chapter:c, block:b, comment})).sort((x, y) => x.comment.start - y.comment.start || x.comment.end - y.comment.end))
+        .filter(x => { if (x.comment.resolved && !showResolved) { resolvedHidden++; return false; } return true; });
+      shown += items.length;
+      if (!items.length) return '';
+      return (story ? `<h3 class="comment-chapter"><button type="button" class="link" data-comment-chapter="${esc(c.id)}">${project.chapters.indexOf(c) + 1}. ${esc(chapterName(c))}</button></h3>` : '') + items.map(x => commentCardHTML(x, story)).join('');
+    }).join('');
+    const where = story ? 'in this story' : 'in this chapter';
+    keepCommentFocus($('comment-list'), () => {
+      $('comment-list').innerHTML = html || `<p class="comment-empty">No ${showResolved ? '' : 'open '}comments ${where}.${resolvedHidden ? ` ${resolvedHidden} resolved comment${resolvedHidden === 1 ? ' is' : 's are'} hidden.` : ''}</p>`;
+    });
+    $('comments-total').textContent = story ? open : openComments(chapter());
+    autosizeComments($('comment-list'));
+  }
+  function scheduleComments() { clearTimeout(commentsTimer); commentsTimer = setTimeout(renderComments, 250); }
+  function autosizeComments(root) { if (!autosizeNative) root.querySelectorAll('textarea').forEach(autosize); }
+  function openCommentDialog(id) {
+    activeComment = id;
+    $('comment-dialog').dataset.comment = id;
+    renderCommentDialog();
+    if (!$('comment-dialog').open) $('comment-dialog').showModal();
+    $('comment-dialog').querySelector('[data-comment-field="note"]')?.focus();
+  }
+  function renderCommentDialog() {
+    const found = findComment($('comment-dialog').dataset.comment);
+    if (!found) { $('comment-dialog').close(); return; }
+    keepCommentFocus($('comment-dialog-body'), () => {
+      $('comment-dialog-body').innerHTML = `<span class="eyebrow">Comment · ${esc(chapterName(found.chapter))}</span>` + commentCardHTML(found)
+        .replace('title="Show in the text"', 'title="Show this in the editor"');
+    });
+    autosizeComments($('comment-dialog-body'));
+  }
+  // Floating "Comment" button: above the selection in a text block, or in the story while reading.
+  function placeCommentFloat(top, left) {
+    const button = $('comment-float');
+    button.hidden = false;
+    const width = button.offsetWidth || 110;
+    button.style.top = Math.max(window.scrollY + 60, top - 38) + 'px';
+    button.style.left = Math.min(Math.max(8, left - width / 2), document.documentElement.clientWidth - width - 8) + 'px';
+  }
+  function hideCommentFloat() { $('comment-float').hidden = true; $('comment-float').dataset.mode = ''; }
+  function updateCommentFloat() {
+    const textarea = document.activeElement;
+    if (blocked || previewing || !textarea?.matches?.('#blocks textarea[data-edit="text"]') || textarea.selectionStart === textarea.selectionEnd) {
+      if ($('comment-float').dataset.mode !== 'read') hideCommentFloat();
+      return;
+    }
+    // Measure where the selection starts with a probe in the highlight layer, which lays the text out exactly like the textarea.
+    const mirror = textarea.parentElement.querySelector('.prose-marks'), text = textarea.value, pos = textarea.selectionStart;
+    mirror.innerHTML = esc(text.slice(0, pos)) + '<span class="caret-probe">​</span>' + esc(text.slice(pos));
+    const rect = mirror.querySelector('.caret-probe').getBoundingClientRect();
+    const block = chapter().blocks.find(b => b.id === textarea.closest('[data-block]').dataset.block);
+    if (block) mirror.innerHTML = marksHTML(block);
+    $('comment-float').dataset.mode = 'edit';
+    placeCommentFloat(rect.top + window.scrollY, rect.left + window.scrollX + 40);
+  }
+  // Read mode: the selection inside one paragraph block, as offsets into that block's text.
+  function readSelection() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const range = selection.getRangeAt(0), prose = (range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement)?.closest('#preview .prose[data-block]');
+    if (!prose) return null;
+    const offset = (node, at) => { const r = document.createRange(); r.selectNodeContents(prose); r.setEnd(node, at); return r.toString().length; };
+    const start = offset(range.startContainer, range.startOffset);
+    const end = prose.contains(range.endContainer) ? offset(range.endContainer, range.endOffset) : prose.textContent.length;
+    return end > start ? {block:prose.dataset.block, start, end, rect:range.getBoundingClientRect()} : null;
+  }
+  function updateReadFloat() {
+    if (!previewing || !ui.readComments || blocked) { if ($('comment-float').dataset.mode === 'read') hideCommentFloat(); return; }
+    const picked = readSelection();
+    if (!picked) { hideCommentFloat(); return; }
+    $('comment-float').dataset.mode = 'read';
+    placeCommentFloat(picked.rect.top + window.scrollY, picked.rect.left + window.scrollX + picked.rect.width / 2);
+  }
+  function refreshPreviewMarks() {
+    $('preview').querySelectorAll('.prose[data-block]').forEach(div => {
+      const block = project.chapters.flatMap(c => c.blocks).find(b => b.id === div.dataset.block);
+      if (block) div.innerHTML = ui.readComments ? marksHTML(block) : esc(block.text);
+    });
   }
 
   /* ---------- Export / preview ---------- */
@@ -944,23 +1297,28 @@
   function figureMarkup(b, forExport) {
     const img = file => {
       const src = esc(forExport ? fileURL(file) : imageURL(file)), title = esc(metadata(file).title);
-      return isVideo(file) ? `<video src="${src}" aria-label="${title}" controls playsinline preload="metadata"></video>` : `<img src="${src}" alt="${title}" loading="lazy">`;
+      return (isVideo(file) ? `<video src="${src}" aria-label="${title}" controls playsinline preload="metadata"></video>` : `<img src="${src}" alt="${title}" loading="lazy">`) + (forExport ? '' : hiddenMediaHTML(file));
     };
     const classes = [b.size && b.size !== 'large' ? 'size-' + b.size : '', b.type === 'gallery' ? 'gallery layout-' + b.layout : ''].filter(Boolean).join(' ');
     const body = b.type === 'gallery' ? `<div class="gallery-cells" style="--cols:${groupColumns(b)}">${b.items.map(x => img(x.file)).join('')}</div>` : img(b.file);
     return `<figure${classes ? ` class="${esc(classes)}"` : ''}>${body}${b.caption ? `<figcaption>${esc(b.caption)}</figcaption>` : ''}</figure>`;
   }
   function storyMarkup(forExport = false) {
-    return disclaimerMarkup(forExport) + `<h1>${esc(project.title || 'Untitled story')}</h1>${project.subtitle ? `<p class="subtitle">${esc(project.subtitle)}</p>` : ''}<nav aria-label="Chapters">${project.chapters.map((c,i) => `<a href="#read-${esc(c.id)}">${i+1}. ${esc(chapterName(c))}</a>`).join(' · ')}</nav>` + project.chapters.map((c,index) => `<section class="preview-chapter" id="read-${esc(c.id)}"><div class="eyebrow">Chapter ${index+1}${forExport ? '' : `<button type="button" class="preview-edit" data-edit-chapter="${esc(c.id)}">Edit</button>`}</div><h2>${esc(chapterName(c))}</h2>${c.blocks.map(b => b.type === 'text' ? (b.text ? `<div class="prose">${esc(b.text)}</div>` : '') : figureMarkup(b, forExport)).join('')}${!forExport && !c.blocks.length ? '<p class="preview-empty">This chapter is empty. Return to the editor to add text or images.</p>' : ''}</section>`).join('');
+    return disclaimerMarkup(forExport) + `<h1>${esc(project.title || 'Untitled story')}</h1>${project.subtitle ? `<p class="subtitle">${esc(project.subtitle)}</p>` : ''}<nav aria-label="Chapters">${project.chapters.map((c,i) => `<a href="#read-${esc(c.id)}">${i+1}. ${esc(chapterName(c))}</a>`).join(' · ')}</nav>` + project.chapters.map((c,index) => `<section class="preview-chapter" id="read-${esc(c.id)}"><div class="eyebrow">Chapter ${index+1}${forExport ? '' : `<button type="button" class="preview-edit" data-edit-chapter="${esc(c.id)}">Edit</button>`}</div><h2>${esc(chapterName(c))}</h2>${c.blocks.map(b => b.type === 'text' ? (b.text ? (forExport ? `<div class="prose">${esc(b.text)}</div>` : `<div class="prose" data-block="${esc(b.id)}">${ui.readComments ? marksHTML(b) : esc(b.text)}</div>`) : '') : figureMarkup(b, forExport)).join('')}${!forExport && !c.blocks.length ? '<p class="preview-empty">This chapter is empty. Return to the editor to add text or images.</p>' : ''}</section>`).join('');
   }
   function showPreview(show) {
-    previewing = show; $('workspace').hidden = show; $('preview').hidden = !show;
+    previewing = show; hideCommentFloat(); $('workspace').hidden = show; $('preview').hidden = !show;
     document.body.classList.toggle('previewing', show);
     $('preview-toggle').textContent = show ? '← Edit' : 'Read';
     $('preview-toggle').setAttribute('aria-pressed', String(show));
     if (show) {
-      $('preview').innerHTML = '<div class="preview-actions"><span>Reading the live draft · private notes are left out</span><button type="button" id="print-story">Print / PDF</button></div>' + storyMarkup();
+      $('preview').innerHTML = `<div class="preview-actions"><span>Reading the live draft · private notes are left out</span><span class="preview-tools"><label title="Show comment highlights. Select words to comment on them; click a highlight to open its comment."><input type="checkbox" id="preview-comments" ${ui.readComments ? 'checked' : ''}> Show comments</label><button type="button" id="print-story">Print / PDF</button></span></div>` + storyMarkup();
       $('print-story').addEventListener('click', () => window.print());
+      $('preview').classList.toggle('show-comments', ui.readComments);
+      $('preview-comments').addEventListener('change', event => {
+        ui.readComments = event.target.checked; saveUI();
+        $('preview').classList.toggle('show-comments', ui.readComments); refreshPreviewMarks(); updateReadFloat();
+      });
       const here = view === 'chapter' && $('read-' + activeChapter);
       if (here && project.chapters[0].id !== activeChapter) { here.scrollIntoView({block:'start', behavior:'instant'}); window.scrollBy(0, -110); return; }
     }
@@ -1051,13 +1409,16 @@
     $('toggle-library').addEventListener('click', () => {
       if (document.body.classList.contains('library-expanded')) { setLibraryExpanded(false); ui.library = false; }
       else ui.library = !ui.library;
+      if (ui.library) ui.comments = false; // The library and the comments share the right-hand column.
       saveUI(); renderLibraryLayout();
     });
+    $('toggle-comments').addEventListener('click', () => toggleComments());
+    $('comments-close').addEventListener('click', () => toggleComments(false));
     $('focus-toggle').addEventListener('click', () => {
-      const focusing = ui.chapters || ui.library;
-      if (focusing) { ui.beforeFocus = {chapters:ui.chapters, library:ui.library}; ui.chapters = ui.library = false; }
-      else { ui.chapters = ui.beforeFocus?.chapters ?? true; ui.library = ui.beforeFocus?.library ?? true; }
-      saveUI(); renderLibraryLayout();
+      const focusing = ui.chapters || ui.library || ui.comments;
+      if (focusing) { ui.beforeFocus = {chapters:ui.chapters, library:ui.library, comments:ui.comments}; ui.chapters = ui.library = ui.comments = false; }
+      else { ui.chapters = ui.beforeFocus?.chapters ?? true; ui.library = ui.beforeFocus?.library ?? true; ui.comments = !ui.library && !!ui.beforeFocus?.comments; }
+      saveUI(); renderLibraryLayout(); renderComments();
     });
     $('topbar-title').addEventListener('click', () => { if (previewing) showPreview(false); selectChapter(null, 'title'); $('project-title').focus(); });
     $('title-page-item').addEventListener('click', () => selectChapter(null, 'title'));
@@ -1113,12 +1474,23 @@
       const field = event.target.dataset.edit, article = event.target.closest('[data-block]');
       if (!field || !article || blocked) return;
       const block = chapter().blocks.find(b => b.id === article.dataset.block); if (!block) return;
-      history(block.id + field); block[field] = event.target.value; autosize(event.target); changed(false);
+      history(block.id + field);
+      const hadComments = commentsOf(block).length && field === 'text';
+      if (hadComments) shiftComments(block, textChange(block.text, event.target.value, event.target.selectionEnd), event.target.value);
+      block[field] = event.target.value; autosize(event.target); changed(false);
+      if (field === 'text') renderMarks(article, block);
+      if (hadComments) scheduleComments();
       trackCaret(event.target);
     });
-    ['focusin', 'click', 'keyup', 'select'].forEach(type => $('blocks').addEventListener(type, event => {
-      if (event.target.matches?.('textarea[data-edit="text"]')) trackCaret(event.target);
+    ['focusin', 'click', 'keyup', 'select', 'pointerup'].forEach(type => $('blocks').addEventListener(type, event => {
+      if (!event.target.matches?.('textarea[data-edit="text"]')) return;
+      trackCaret(event.target);
+      const block = chapter().blocks.find(b => b.id === event.target.closest('[data-block]')?.dataset.block);
+      if (block && type !== 'focusin') setActiveComment(commentAtCaret(block, event.target.selectionStart));
+      updateCommentFloat();
     }));
+    $('blocks').addEventListener('focusout', event => { if (event.target.matches?.('textarea[data-edit="text"]')) setTimeout(updateCommentFloat, 0); });
+    window.addEventListener('scroll', () => { if ($('comment-float').dataset.mode === 'read') hideCommentFloat(); }, {passive:true});
     $('blocks').addEventListener('keydown', event => {
       const textarea = event.target.closest('textarea'), article = event.target.closest('[data-block]');
       if (!article || blocked) return;
@@ -1145,8 +1517,9 @@
       }
       const article = event.target.closest('[data-block]'); if (!article) return;
       const id = article.dataset.block, blocks = chapter().blocks, block = blocks.find(b => b.id === id); if (!block) return;
-      const viewItem = event.target.closest('[data-view-item]');
-      if (viewItem || event.target.closest('[data-view-image]')) {
+      const hit = event.target.closest('.media-hidden')?.previousElementSibling || event.target;
+      const viewItem = hit.closest('[data-view-item]');
+      if (viewItem || hit.closest('[data-view-image]')) {
         const list = blocks.flatMap(b => b.type === 'image' ? [{file:b.file, block:b.id}] : b.type === 'gallery' ? b.items.map((x, i) => ({file:x.file, block:b.id, item:i})) : []);
         openLightbox(list, list.findIndex(x => x.block === id && (!viewItem || x.item === Number(viewItem.dataset.viewItem))), 'chapter'); return;
       }
@@ -1171,8 +1544,9 @@
       else if (action === 'group-prev') mergeBlocks(blocks.indexOf(block) - 1);
       else if (action === 'group-next') mergeBlocks(blocks.indexOf(block));
       else if (action === 'ungroup') ungroup(id);
+      else if (action === 'comment') commentFromTextarea(article.querySelector('textarea[data-edit="text"]'));
       else if (action === 'duplicate') {
-        const copy = {...clone(block), id:uid()};
+        const copy = {...clone(block), id:uid()}; delete copy.comments;
         mutate(() => { blocks.splice(blocks.indexOf(block) + 1, 0, copy); pendingScroll = [copy.id]; });
       }
     });
@@ -1233,11 +1607,51 @@
     $('image-sort').addEventListener('change', event => { ui.sort = event.target.value; saveUI(); sortLibrary(); });
     $('unused-only').addEventListener('change', updateLibrary);
     document.querySelectorAll('[data-thumb-size]').forEach(button => button.addEventListener('click', () => { ui.thumb = button.dataset.thumbSize; saveUI(); renderLibraryLayout(); }));
-    $('hide-thumbnails').addEventListener('change', event => {
-      document.body.classList.toggle('hide-images', event.target.checked);
-      try { localStorage.setItem(HIDE_KEY, String(event.target.checked)); } catch {}
+    $('settings-button').addEventListener('click', () => {
+      $('setting-hide-images').checked = document.body.classList.contains('hide-images');
+      $('setting-comment-marks').checked = ui.commentMarks;
+      $('settings').showModal();
     });
-    try { $('hide-thumbnails').checked = localStorage.getItem(HIDE_KEY) === 'true'; document.body.classList.toggle('hide-images', $('hide-thumbnails').checked); } catch {}
+    $('setting-hide-images').addEventListener('change', event => {
+      try { localStorage.setItem(HIDE_KEY, String(event.target.checked)); } catch {}
+      applyHideImages(event.target.checked);
+    });
+    $('setting-comment-marks').addEventListener('change', event => { ui.commentMarks = event.target.checked; saveUI(); renderLibraryLayout(); });
+    try { applyHideImages(localStorage.getItem(HIDE_KEY) === 'true'); } catch {}
+
+    // Comments: the panel and the dialog share one set of controls.
+    const commentRoots = [$('comment-list'), $('comment-dialog-body')];
+    commentRoots.forEach(root => {
+      root.addEventListener('input', event => {
+        const field = event.target.dataset.commentField, id = event.target.closest('[data-comment-id]')?.dataset.commentId;
+        if (!field || !id) return;
+        setCommentField(id, field, event.target.value); autosize(event.target);
+      });
+      root.addEventListener('click', event => {
+        const card = event.target.closest('[data-comment-id]'), id = card?.dataset.commentId;
+        const chapterLink = event.target.closest('[data-comment-chapter]');
+        if (chapterLink) { selectChapter(chapterLink.dataset.commentChapter); return; }
+        if (!id) return;
+        const label = event.target.closest('[data-comment-label]'), action = event.target.closest('[data-comment-action]');
+        if (label) {
+          const found = findComment(id);
+          if (found && found.comment.label !== label.dataset.commentLabel) mutate(() => { found.comment.label = label.dataset.commentLabel; found.comment.updated = new Date().toISOString(); });
+        } else if (action) commentAction(id, action.dataset.commentAction);
+        else if (event.target.closest('[data-comment-go]')) goToComment(id);
+        else if (root === $('comment-list') && !event.target.closest('textarea, button')) setActiveComment(id, false);
+      });
+    });
+    document.querySelectorAll('[data-comment-scope]').forEach(button => button.addEventListener('click', () => { ui.commentScope = button.dataset.commentScope; saveUI(); renderComments(); }));
+    $('comments-resolved').addEventListener('change', event => { showResolved = event.target.checked; renderComments(); });
+    $('comment-dialog').addEventListener('close', () => { if (previewing) refreshPreviewMarks(); });
+    $('comment-float').addEventListener('pointerdown', event => event.preventDefault()); // Keep the text selection.
+    $('comment-float').addEventListener('click', () => {
+      const mode = $('comment-float').dataset.mode; hideCommentFloat();
+      if (mode === 'read') {
+        const picked = readSelection(); window.getSelection()?.removeAllRanges();
+        if (picked) addComment(picked.block, picked.start, picked.end, true);
+      } else commentFromTextarea(document.activeElement);
+    });
     $('library-resizer').addEventListener('pointerdown', event => {
       event.preventDefault();
       const resizer = event.currentTarget; resizer.setPointerCapture(event.pointerId); resizer.classList.add('active');
@@ -1382,9 +1796,16 @@
         return;
       }
       if (event.altKey && !mod && key === 'i' && !previewing) { event.preventDefault(); startPick('insert'); return; }
+      if (event.altKey && !mod && !event.shiftKey && event.code === 'KeyC' && !document.querySelector('dialog[open]')) {
+        event.preventDefault();
+        if (previewing) { const picked = ui.readComments && readSelection(); if (picked) { hideCommentFloat(); addComment(picked.block, picked.start, picked.end, true); } else notify('Turn on “Show comments” and select some words in the story to comment on them.'); }
+        else if (event.target.matches?.('#blocks textarea[data-edit="text"]')) commentFromTextarea(event.target);
+        else if (!typing(event.target)) toggleComments();
+        return;
+      }
       if (event.key === '/' && !mod && !typing(event.target) && !previewing && !document.querySelector('dialog[open]')) {
         event.preventDefault();
-        if (!ui.library && !document.body.classList.contains('library-expanded')) { ui.library = true; saveUI(); renderLibraryLayout(); }
+        if (!ui.library && !document.body.classList.contains('library-expanded')) { ui.library = true; ui.comments = false; saveUI(); renderLibraryLayout(); }
         $('image-search').focus(); $('image-search').select();
       }
     });
@@ -1393,9 +1814,13 @@
     // Preview, export and project files
     $('preview-toggle').addEventListener('click', () => showPreview(!previewing));
     $('preview').addEventListener('click', event => {
+      const mark = event.target.closest('mark[data-comments]');
+      if (mark && ui.readComments && window.getSelection()?.isCollapsed !== false) { openCommentDialog(mark.dataset.comments.split(' ')[0]); return; }
       const edit = event.target.closest('[data-edit-chapter]'); if (!edit) return;
       showPreview(false); selectChapter(edit.dataset.editChapter);
     });
+    ['pointerup', 'keyup'].forEach(type => $('preview').addEventListener(type, () => setTimeout(updateReadFloat, 0)));
+    document.addEventListener('selectionchange', () => { if ($('comment-float').dataset.mode === 'read' && window.getSelection()?.isCollapsed) hideCommentFloat(); });
     $('export-html').addEventListener('click', () => {
       const gate = !!project.disclaimerGate && !!(project.disclaimer || '').trim();
       const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(project.title || 'Untitled story')}</title><style>${READER_CSS}</style>${gate ? '<noscript><style>body.gated main{visibility:visible}#gate{display:none}</style></noscript>' : ''}</head><body${gate ? ' class="gated"' : ''}>${gate ? `<div id="gate" role="dialog" aria-modal="true" aria-label="Disclaimer"><div><aside class="disclaimer">${esc(project.disclaimer.trim())}</aside><button type="button" onclick="document.body.classList.remove('gated');document.getElementById('gate').remove();scrollTo(0,0)">Continue</button></div></div>` : ''}<main>${gate ? storyMarkup(true).replace(disclaimerMarkup(true), '') : storyMarkup(true)}<footer>Illustrated story · exported ${new Date().toLocaleDateString()}</footer></main></body></html>`;
@@ -1443,7 +1868,7 @@
       blocked = false; $('workspace').disabled = false; $('recovery').hidden = true; changed();
     });
     window.addEventListener('storage', event => {
-      if (event.key === HIDE_KEY) { $('hide-thumbnails').checked = event.newValue === 'true'; document.body.classList.toggle('hide-images', $('hide-thumbnails').checked); return; }
+      if (event.key === HIDE_KEY) { applyHideImages(event.newValue === 'true'); return; }
       if (serverMode) return; // The server's revision check arbitrates disk writes.
       if (event.key === KEY && event.newValue) {
         try { if (JSON.parse(event.newValue).writer === writer) return; } catch {}
@@ -1468,7 +1893,7 @@
       warning.textContent = event.target.tagName === 'VIDEO' ? 'Video unavailable or in a format this browser cannot play (MP4/H.264 and WebM work best).' : serverMode ? 'Image unavailable. Keep its original file in this story’s folder.' : 'Image unavailable. Keep its original file beside editor.html.';
       parent.append(warning);
     }, true);
-    document.addEventListener('mouseenter', event => { if (event.target.matches?.('video[data-hover-play]')) event.target.play().catch(() => {}); }, true);
+    document.addEventListener('mouseenter', event => { if (event.target.matches?.('video[data-hover-play]') && !document.body.classList.contains('hide-images')) event.target.play().catch(() => {}); }, true);
     document.addEventListener('mouseleave', event => { if (event.target.matches?.('video[data-hover-play]')) event.target.pause(); }, true);
   }
 

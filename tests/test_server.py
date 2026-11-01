@@ -201,7 +201,7 @@ class OneStoryTest(ServerTest):
 
 class StoryListTest(ServerTest):
     def test_info_and_empty_list(self):
-        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 6, 'appVersion': __version__})
+        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 7, 'appVersion': __version__})
         listed = self.get('/api/stories')
         self.assertEqual((listed['stories'], listed['token']), ([], self.server.token))
         status, _, body = self.open('/')

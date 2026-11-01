@@ -241,6 +241,7 @@
     if (event.target.matches('img, video')) event.target.remove();
   }, true);
   $('notice-close').addEventListener('click', hideNotice);
+  $('settings-button').addEventListener('click', () => $('settings').showModal());
   $('hide-images').addEventListener('change', event => {
     try { localStorage.setItem(HIDE_KEY, String(event.target.checked)); } catch {}
     applyHideImages(event.target.checked);
