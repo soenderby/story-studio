@@ -1,2 +1,2 @@
 # The single source of the app version. Releases bump this (see docs/PLAN.md, phase 5).
-__version__ = '0.3.1'
+__version__ = '0.4.0'

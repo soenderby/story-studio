@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-11-01)
+
 ### New
 
 - **Export PDF** (⋯ menu): downloads the story as an A4 PDF with the pictures, each chapter on a new page. Videos appear as their first frame.
