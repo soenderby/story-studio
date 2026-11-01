@@ -26,13 +26,14 @@ import os
 from pathlib import Path
 import re
 import socket
+import ssl
 import subprocess
 import sys
 import threading
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 from . import ed25519, story
 from .update_key import PUBLIC_KEY
@@ -61,6 +62,17 @@ SEMVER = re.compile(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
 INSTALLER_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.exe')
 SHA256 = re.compile(r'[0-9a-f]{64}')
 BUSY = ('downloading', 'verifying', 'installing')
+
+
+def tls_context():
+    """Certificate checks against the system's trusted certificates, accepting a chain that ends at any
+    certificate the system already trusts. Windows keeps cross-signed intermediates in its store; without
+    this, OpenSSL can build GitHub's chain through one whose own issuer is absent and fail with "unable to
+    get issuer certificate", even though the right root is installed (Python 3.13 sets this by default).
+    The manifest's Ed25519 signature, not TLS, is what makes an update trustworthy."""
+    context = ssl.create_default_context()
+    context.verify_flags |= getattr(ssl, 'VERIFY_X509_PARTIAL_CHAIN', 0)
+    return context
 
 
 class UpdateError(Exception):
@@ -251,8 +263,9 @@ class Updater:
         self.retry_at = None
         self.stopping = threading.Event()
         self.thread = None
-        self.remote = build_opener(SafeRedirect)  # Uses the system or environment proxy settings.
-        self.local = build_opener(ProxyHandler({}), SafeRedirect)  # Localhost never goes through a proxy.
+        https = HTTPSHandler(context=tls_context())
+        self.remote = build_opener(https, SafeRedirect)  # Uses the system or environment proxy settings.
+        self.local = build_opener(ProxyHandler({}), https, SafeRedirect)  # Localhost never goes through a proxy.
 
     # ---------- State ----------
 

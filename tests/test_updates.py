@@ -208,6 +208,20 @@ class SemverTest(unittest.TestCase):
             self.assertEqual(updates.offered(latest, current), expected, (latest, current))
 
 
+class TlsTest(unittest.TestCase):
+    def test_context_verifies_and_accepts_chains_ending_at_a_trusted_intermediate(self):
+        context = updates.tls_context()
+        self.assertEqual((context.verify_mode, context.check_hostname), (updates.ssl.CERT_REQUIRED, True))
+        self.assertTrue(context.verify_flags & updates.ssl.VERIFY_X509_PARTIAL_CHAIN)
+
+    def test_remote_and_local_openers_use_it(self):
+        updater = updates.Updater(mock.Mock(path='/nonexistent/settings.json'), home='/nonexistent')
+        for opener in (updater.remote, updater.local):
+            https = [h for h in opener.handlers if isinstance(h, updates.HTTPSHandler)]
+            self.assertEqual(len(https), 1)
+            self.assertTrue(https[0]._context.verify_flags & updates.ssl.VERIFY_X509_PARTIAL_CHAIN)
+
+
 class UpdaterTest(TempHome):
     def setUp(self):
         super().setUp()

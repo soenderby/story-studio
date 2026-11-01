@@ -103,7 +103,9 @@ Each phase ends with its tests passing and a short entry in `CHANGELOG.md`. Ever
   - [x] 0.2.0 installed on the maintainer's machine (per-user, Start-menu shortcut), serving on 8765
   - [x] A pre-0.2 story folder added: project content unchanged, legacy descriptions migrated, pre-migration backup written
   - [ ] Manual: folder dialog appears in front of the browser; tray icon; old browser recovery copy adopted
-  - [ ] First real in-place update (0.2.0 → next release) using the real signing key
+  - [x] 0.3.0 released (comments, Settings, hide all images); published files verified with the real key
+  - [x] Found by the 0.2.0 → 0.3.0 attempt: the installed app's update check failed with `CERTIFICATE_VERIFY_FAILED` (unable to get issuer certificate). OpenSSL built GitHub's chain through a cross-signed intermediate in the Windows store. Fixed in 0.3.1 with `VERIFY_X509_PARTIAL_CHAIN`; 0.2.0/0.3.0 installs need 0.3.1 installed by hand once
+  - [ ] Install 0.3.1 by hand, confirm its update check succeeds, then do the first real in-place update with the next release
 
 ## Open items carried forward
 

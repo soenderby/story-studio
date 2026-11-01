@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Checking for updates failed on some Windows computers** with “certificate verify failed: unable to get issuer certificate”. On those computers, 0.2.0 and 0.3.0 cannot update themselves: download and run `StoryStudio-Setup-0.3.1.exe` from the [releases page](https://github.com/soenderby/story-studio/releases) once. Your stories and settings are kept. Later updates install from inside the app again.
+
 ## 0.3.0 (2026-11-01)
 
 ### New
