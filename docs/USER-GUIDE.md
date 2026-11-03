@@ -41,14 +41,14 @@ Since the project file lives in a Dropbox folder, Dropbox can sync it along with
 The middle of the screen looks like the finished page. Controls appear only when you hover over or click into something.
 
 - **Chapters** (left): click to open, **drag to reorder**, and drop an image or block onto a chapter to move it there. **Title page** edits the story title and introduction. **Notes** above each chapter holds private notes. A dot means the chapter has notes.
-- **Story outline** (top of the left sidebar, dashed): a private planning page for premise, characters, arc and open questions. **Insert chapter list** adds the current chapter titles; **Download (.md)** saves a copy. The outline is saved in the project but never appears in Read, Print or Export.
+- **Story outline** (top of the left sidebar, dashed): a private planning page for the premise, the arc, chapter beats and open questions. **Insert chapter list** adds the current chapter titles; **Download (.md)** saves a copy. The outline is saved in the project but never appears in Read, Print or Export.
 - **Disclaimer**: text readers see before the title in Read, Print and exported HTML. Leave it empty for none. Tick **Readers must click Continue** to make the exported story open on the disclaimer alone, with a Continue button.
 - **Writing**: text boxes grow as you type. Blank lines separate paragraphs. Text is plain text, not Markdown/rich text.
 - **Insert anywhere**: hover between any two blocks to get **+ Text** / **+ Image**. Clicking the thin line between blocks marks that spot for the next image.
 - **Images go where you are working.** The library always says where the next picture will land: at the marked spot, at your text cursor (the paragraph is split around the picture), or at the end of the chapter.
 - **Image library** (right): pictures load as small cached thumbnails. Search, filter by scene, sort newest first (newly generated images are at the top), show only unused pictures, change the thumbnail size, or drag the panel edge to resize it. **⤢** enlarges the library to fill the screen. Hover a picture for **+ Insert**, tick several for a batch insert, or drag one to any spot in the chapter.
 - **Click any picture** (in the library or the story) to see it large. Use ← → to browse. Here you can write a **description** and **scene** for it; these make search useful and are saved in the project, never in the image file. The viewer also lists where the picture is already used.
-- **Picture blocks**: hover for size (**S / M / L / Wide**), **Replace** (keeps the caption), move up/down, or **⋯** for Duplicate, Move to chapter and Delete. Click under a picture to write a caption.
+- **Picture blocks**: hover for size (**S / M / L / Wide**), **Replace** (keeps the caption), move up/down, or **⋯** for Duplicate, Move to chapter (or to a character page) and Delete. Click under a picture to write a caption.
 - **Picture groups**: 2–12 pictures shown together as a **Row** or a **Grid**, with one shared caption. Make one by:
   - ticking pictures in the library and choosing **Insert as one group**;
   - dragging a picture onto the left or right edge of another picture (it shows *Group side by side*);
@@ -58,6 +58,31 @@ The middle of the screen looks like the finished page. Controls appear only when
 - **Focus** hides all side panels. **☰**, **Images** and **Comments** toggle each one. Images and Comments share the right-hand side, so opening one closes the other.
 - **Read** shows the whole draft as a reader will see it, opened at the current chapter. Each chapter has an **Edit** button that jumps back to it.
 - The dot in the top bar is green when everything is on disk. Click it for details.
+
+## Characters
+
+Get to know your characters on pages of their own. There are no forms or fields to fill in: a character page is a free page, like a chapter, that you build up as the character takes shape.
+
+- **Characters** (left sidebar, above the chapters): **+** adds a character, click one to open it, drag to reorder. Each shows its portrait and name.
+- **The character page** has a name, an optional *also called* line for nicknames, and a free page below it. Write, insert pictures and picture groups, add captions and comments exactly as in a chapter: bio, looks, temperament, history, in your own words and order. Deleting a character shows **Undo**, which also brings back its connections.
+- **Looks**: tag pictures with the characters in them. In the picture viewer, click names under **In this picture**, or drag a picture from the library onto a character's Looks. Every tagged picture appears in that character's **Looks** gallery. Concept art and story pictures share the one library, so a picture can be in the story, tagged, both or neither.
+- **Portrait**: open a look and click **Make portrait**. Without a chosen portrait, the first look is used.
+- **Earlier looks**: when a character's look moves on, tick **Earlier look** in the viewer instead of deleting the old pictures. Earlier looks stay in the gallery, dimmed and after the current ones.
+- **Library filter**: the library's character menu shows the pictures of one character, or those not tagged with anyone.
+- **Copy as text** puts the character on the clipboard as plain text: name, *also called*, the page's text and captions, and the connections. Paste it into an image generator's prompt or a note. Pictures and comments are left out.
+
+### Relationship map
+
+- **Relationship map** (under the characters) shows the whole cast as portraits joined by lines. It lays itself out: closely connected characters sit near each other.
+- **+ Connection**: pick two characters, mutual (**↔**) or one-way (**→**), and a word such as *sisters* or *admires*. One-way connections are dashed arrows, so A can feel differently about B than B does about A.
+- **Click a line or its word** to write a note about the connection, change the word or the direction, or delete it (with **Undo**).
+- **Click a portrait** to open that character's page. Each character page also has a **Connections** section showing that character with everyone they are connected to.
+
+### Private, and newer stories
+
+Characters, tags and connections are saved in `story-project.json` and in downloaded backups. They never appear in Read, Print, exported HTML or PDF.
+
+The first character changes the story to a newer project format, so older versions of Story Studio cannot delete the characters by accident. The story file from before is kept as `story-project.v1.backup.json`. Older versions refuse to open the story instead, so **update Story Studio on every computer that edits the same story**. Stories without characters are unchanged.
 
 ## Comments and markup
 
@@ -70,7 +95,7 @@ Leave notes on your own text while you write or reread, and mark passages to com
 - **The Comments panel** lists the comments of **This chapter** or the **Whole story**, in reading order. Click the quoted words on a card to jump to them in the text. Putting the cursor inside highlighted words highlights their card. The chapter list shows how many open comments each chapter has.
 - **Comments follow the words.** Edit freely: highlights move as you type, splitting and joining text blocks keeps them with their words, and moving a block to another chapter takes its comments along. If you delete all the commented words, the comment stays and shows the original words struck through. Duplicating a block does not copy its comments.
 - **Commenting while reading**: in **Read**, tick **Show comments** to see the highlights. Select words to comment on them, or click a highlight to open its comment. **Show this in the editor** jumps back to the spot.
-- Comments are **private**. They are saved in `story-project.json` and in downloaded backups, but never appear in Print or exported HTML, and appear in Read only when you turn them on.
+- Comments are **private**. They are saved in `story-project.json` and in downloaded backups, but never appear in Print or exported HTML, and appear in Read only when you turn them on. Comments work on character pages too; the panel lists them after the chapters.
 - ⋯ → **Settings** → **Highlight commented text** turns the highlights off while writing, if you prefer a clean page. The Comments panel still works.
 
 ### Keyboard shortcuts

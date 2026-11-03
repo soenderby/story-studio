@@ -1,6 +1,6 @@
 # Story elements: characters (design)
 
-Status: design agreed in conversation 2026-11-03, not built yet. Characters come first. Places, objects and a story-wide timeline are expected later and use the same structure, as further element *kinds*.
+Status: design agreed in conversation 2026-11-03; built for 0.5.0. Characters come first. Places, objects and a story-wide timeline are expected later and use the same structure, as further element *kinds*.
 
 ## What it should feel like
 
@@ -97,7 +97,7 @@ New optional top-level fields:
 
 ## Building it
 
-Progress: steps 1–5 done (2026-11-03).
+Progress: all six steps done (2026-11-03).
 
 1. **Format and server**: validation of `elements` and `relations`, format 2 and its backup, API 9, tests.
 2. **Pages**: make the block editor work on any page (chapter or element), not only chapters, including comments, undo, the Comments panel ("This page" / "Whole story", with character pages listed after the chapters), drag and drop, and "Move to…".

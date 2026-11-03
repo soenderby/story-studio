@@ -2,9 +2,20 @@
 
 ## Unreleased
 
+### New
+
+- **Characters.** Give each character a page of their own (left sidebar, above the chapters): a free page like a chapter, for text, pictures, captions and comments, with no forms to fill in. Add an *also called* line for nicknames. Characters are private and never appear in Read, Print or exports.
+- **Looks.** Tag pictures with the characters in them (**In this picture** in the picture viewer, or drag them onto a character's Looks). Each character gets a gallery of their pictures, a portrait you choose, and **Earlier looks** for pictures that no longer match. The library can show the pictures of one character, or untagged ones.
+- **Relationship map.** See the whole cast joined by lines, laid out automatically. Each connection has a word, a note shown when you click it, and can be mutual or one-way. Each character page shows that character's connections.
+- **Copy as text** on a character page copies the name, the page's text and the connections, for example to brief an image generator.
+
 ### Changed
 
-- **Project format 2** for stories with characters. The first time a story gets a character, the previous file is kept as `story-project.v1.backup.json`. Older versions of Story Studio refuse to open such a story instead of deleting its characters when they save. Stories without characters are unchanged.
+- The Story outline's hint no longer suggests writing characters there.
+
+### Compatibility
+
+- **Project format 2** for stories with characters. The first time a story gets a character, the previous file is kept as `story-project.v1.backup.json`. Older versions of Story Studio refuse to open such a story instead of deleting its characters when they save. Stories without characters are unchanged. Update every computer that edits the same story.
 
 ## 0.4.1 (2026-11-03)
 
