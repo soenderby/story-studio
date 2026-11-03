@@ -23,7 +23,15 @@ COMMENT_LABELS = {'note', 'change', 'question', 'keep'}
 MAX_COMMENTS = 500  # per text block
 LEGACY_DATA = 'editor-data.js'  # Older single-story installs kept image descriptions here, beside the media.
 MAX_BODY = 10_000_000
+ELEMENT_KINDS = {'character'}  # A new kind with new fields needs a new format version: older apps drop what they do not know.
+MAX_ELEMENTS = 500
+MAX_RELATIONS = 5000
+MAX_ELEMENT_PICTURES = 2000
+# Format 2 = format 1 + story elements (characters) and relations. Apps that only know format 1 refuse to open it,
+# rather than dropping the characters when they save.
+FORMAT_VERSIONS = (1, 2)
 PROJECT_NAME = 'story-project.json'
+V1_BACKUP_NAME = 'story-project.v1.backup.json'
 PRE_MIGRATION_NAME = 'story-project.pre-migration.json'
 DEFAULT_CATEGORIES = {'', 'New additions', 'Videos', 'Added images'}
 BLANK_PROJECT = {'format': 'illustrated-story-project', 'version': 1, 'id': 'new-story', 'title': 'Untitled story',
@@ -85,9 +93,13 @@ def clean_comments(value, block_text, text, unique_id):
 
 def validate_project(value):
     """Reject malformed imports before touching the last good file."""
-    if not isinstance(value, dict) or value.get('format') != 'illustrated-story-project' or type(value.get('version')) is not int or value['version'] != 1:
-        raise ValueError('Not a supported Story studio project (version 1).')
+    if not isinstance(value, dict) or value.get('format') != 'illustrated-story-project' or type(value.get('version')) is not int:
+        raise ValueError('Not a supported Story studio project.')
+    if value['version'] not in FORMAT_VERSIONS:
+        raise ValueError('This story was saved by a newer version of Story Studio. Update Story Studio to open it.'
+                         if value['version'] > max(FORMAT_VERSIONS) else 'Not a supported Story studio project.')
     ids = set()
+    count = 0
 
     def text(value, limit=2_000_000):
         if not isinstance(value, str) or len(value) > limit:
@@ -100,20 +112,13 @@ def validate_project(value):
         ids.add(value)
         return value
 
-    chapters = value.get('chapters')
-    if not isinstance(chapters, list) or not 1 <= len(chapters) <= 500:
-        raise ValueError('A project must contain 1–500 chapters.')
-    clean = {'format': 'illustrated-story-project', 'version': 1,
-             'id': text(value.get('id', 'story'), 100),
-             'title': text(value.get('title'), 10000),
-             'subtitle': text(value.get('subtitle'), 100000), 'chapters': []}
-    count = 0
-    for chapter in chapters:
-        if not isinstance(chapter, dict) or not isinstance(chapter.get('blocks'), list):
-            raise ValueError('Invalid chapter.')
-        result = {'id': unique_id(chapter.get('id')), 'title': text(chapter.get('title'), 10000),
-                  'notes': text(chapter.get('notes', ''), 300000), 'blocks': []}
-        for block in chapter['blocks']:
+    def blocks(value):
+        """A page's blocks: a chapter's or a story element's. Every page counts toward the same block limit."""
+        nonlocal count
+        if not isinstance(value, list):
+            raise ValueError('Invalid page blocks.')
+        result = []
+        for block in value:
             count += 1
             if count > 10000 or not isinstance(block, dict):
                 raise ValueError('Invalid or excessive project blocks.')
@@ -143,8 +148,30 @@ def validate_project(value):
                 if not isinstance(block['size'], str) or block['size'] not in IMAGE_SIZES:
                     raise ValueError('Unknown image size.')
                 item['size'] = block['size']
-            result['blocks'].append(item)
+            result.append(item)
+        return result
+
+    chapters = value.get('chapters')
+    if not isinstance(chapters, list) or not 1 <= len(chapters) <= 500:
+        raise ValueError('A project must contain 1–500 chapters.')
+    clean = {'format': 'illustrated-story-project', 'version': value['version'],
+             'id': text(value.get('id', 'story'), 100),
+             'title': text(value.get('title'), 10000),
+             'subtitle': text(value.get('subtitle'), 100000), 'chapters': []}
+    for chapter in chapters:
+        if not isinstance(chapter, dict) or not isinstance(chapter.get('blocks'), list):
+            raise ValueError('Invalid chapter.')
+        result = {'id': unique_id(chapter.get('id')), 'title': text(chapter.get('title'), 10000),
+                  'notes': text(chapter.get('notes', ''), 300000)}
+        result['blocks'] = blocks(chapter['blocks'])
         clean['chapters'].append(result)
+    if 'elements' in value:
+        clean['elements'] = clean_elements(value['elements'], text, unique_id, blocks)
+    if 'relations' in value:
+        clean['relations'] = clean_relations(value['relations'], {e['id'] for e in clean.get('elements', [])},
+                                             text, unique_id)
+    if clean.get('elements') or clean.get('relations'):
+        clean['version'] = 2
     if 'extraImages' in value:
         if not isinstance(value['extraImages'], list) or len(value['extraImages']) > 10000:
             raise ValueError('Invalid additional image library.')
@@ -165,6 +192,62 @@ def validate_project(value):
     if 'updatedAt' in value:
         clean['updatedAt'] = text(value['updatedAt'], 100)
     return clean
+
+
+def clean_elements(value, text, unique_id, blocks):
+    """Story elements (characters). Each has a free page of blocks, like a chapter, and its tagged pictures."""
+    if not isinstance(value, list) or len(value) > MAX_ELEMENTS:
+        raise ValueError(f'A story can hold at most {MAX_ELEMENTS} characters.')
+    result = []
+    for element in value:
+        if not isinstance(element, dict) or element.get('kind') not in ELEMENT_KINDS:
+            raise ValueError('Invalid or unknown story element.')
+        item = {'id': unique_id(element.get('id')), 'kind': element['kind'], 'name': text(element.get('name', ''), 10000)}
+        if 'aka' in element:
+            item['aka'] = text(element['aka'], 10000)
+        if element.get('portrait') is not None:
+            if not safe_media(element['portrait']):
+                raise ValueError('A portrait must be a top-level image filename, not a path or URL.')
+            item['portrait'] = element['portrait']
+        pictures = element.get('pictures', [])
+        if not isinstance(pictures, list) or len(pictures) > MAX_ELEMENT_PICTURES:
+            raise ValueError(f'A character can have at most {MAX_ELEMENT_PICTURES} tagged pictures.')
+        item['pictures'], seen = [], set()
+        for picture in pictures:
+            if not isinstance(picture, dict) or not safe_media(picture.get('file')):
+                raise ValueError('Tagged pictures must be top-level image filenames, not paths or URLs.')
+            if 'earlier' in picture and not isinstance(picture['earlier'], bool):
+                raise ValueError('Invalid earlier-look setting.')
+            if picture['file'] in seen:
+                continue  # Tagging the same picture twice is harmless; keep the first.
+            seen.add(picture['file'])
+            item['pictures'].append({'file': picture['file'], 'earlier': True} if picture.get('earlier')
+                                    else {'file': picture['file']})
+        item['blocks'] = blocks(element.get('blocks', []))
+        result.append(item)
+    return result
+
+
+def clean_relations(value, element_ids, text, unique_id):
+    """Connections between elements. One naming a missing element (or itself) is dropped, never rejected."""
+    if not isinstance(value, list) or len(value) > MAX_RELATIONS:
+        raise ValueError(f'A story can hold at most {MAX_RELATIONS} connections.')
+    result = []
+    for relation in value:
+        if not isinstance(relation, dict):
+            raise ValueError('Invalid connection.')
+        ends = relation.get('from'), relation.get('to')
+        if ends[0] == ends[1] or not all(isinstance(end, str) and end in element_ids for end in ends):
+            continue
+        item = {'id': unique_id(relation.get('id')), 'from': ends[0], 'to': ends[1],
+                'label': text(relation.get('label', ''), 100), 'note': text(relation.get('note', ''), 100000)}
+        if 'oneWay' in relation:
+            if not isinstance(relation['oneWay'], bool):
+                raise ValueError('Invalid connection direction.')
+            if relation['oneWay']:
+                item['oneWay'] = True
+        result.append(item)
+    return result
 
 
 def encode(value):
@@ -358,10 +441,17 @@ class Studio:
         if len(payload) > MAX_BODY:
             raise ValueError('Project exceeds 10 MB.')
         with self.lock:
-            _, current = self.read_project()
+            on_disk, current = self.read_project()
             if not isinstance(expected_revision, str) or not secrets.compare_digest(current, expected_revision):
                 return None
+            if on_disk['version'] > project['version']:
+                # Never step a story back to a format that older apps would open and strip.
+                project['version'] = on_disk['version']
+                payload = encode(project)
             if hashlib.sha256(payload).hexdigest() != current:
+                if on_disk['version'] == 1 and project['version'] > 1 and not (self.root / V1_BACKUP_NAME).exists():
+                    # The last format-1 project, kept once, before older apps stop opening this story.
+                    atomic_write(self.root / V1_BACKUP_NAME, self.project_path.read_bytes())
                 # Back up the previous validated version before replacing it.
                 atomic_write(self.backup_path, self.project_path.read_bytes())
                 atomic_write(self.project_path, payload)

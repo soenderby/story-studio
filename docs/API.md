@@ -5,8 +5,9 @@ This is the contract that phases 1–5 build against (see [PLAN.md](PLAN.md)). C
 ## Versions
 
 - **App version**: semver string in `src/story_studio/version.py` (`__version__`). It is what releases and the updater compare.
-- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks; **8** adds PDF export.
-- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version": 1`. Unchanged by this plan. Optional fields added since, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below). A future format bump must migrate forward, write `story-project.v<old>.backup.json` first, and an older app opening a newer-format project must refuse to save instead of overwriting it.
+- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks; **8** adds PDF export; **9** adds characters (project format 2).
+- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version"` 1 or 2. Optional fields added to format 1, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below).
+- **Format 2** (API 9) = format 1 plus `elements` and `relations` (see [Characters](#characters-api-9)). A project with at least one element or relation is format 2; one without stays format 1 and opens in older apps. When a save first turns a story's file into format 2, the server copies the format-1 file to `story-project.v1.backup.json` (only if that file does not exist yet). A save never lowers the version on disk: a format-1 body saved over a format-2 file is written as format 2. Apps before API 9 refuse any version but 1, so they cannot open (and strip) a format-2 story. A version above the newest known is refused with "saved by a newer version of Story Studio". A future format bump follows the same pattern: migrate forward, write `story-project.v<old>.backup.json` first.
 
 ## Files and folders
 
@@ -131,6 +132,24 @@ A text block may have `"comments": [Comment]` (at most 500; omitted when empty).
 - `created`, `updated`: ISO 8601 strings (≤ 100 characters).
 
 Comments are never written to exported HTML.
+
+## Characters (API 9)
+
+Top-level `elements` (at most 500) and `relations` (at most 5000), both optional. See [STORY-ELEMENTS.md](STORY-ELEMENTS.md) for the design.
+
+`Element` = `{"id", "kind": "character", "name", "aka"?, "portrait"?, "pictures": [{"file", "earlier"?: true}], "blocks": [Block]}`
+
+- `id` shares the project's id namespace (chapters, blocks, comments). `kind` is only `"character"`; a new kind that brings new fields needs a new format version.
+- `name` (may be empty) and `aka` ≤ 10 000 characters. `portrait`: a top-level media filename, or absent.
+- `pictures`: the pictures tagged with this character, at most 2000, top-level media filenames. A repeated file keeps its first entry. `earlier: true` marks an earlier look; `false` is dropped.
+- `blocks`: the character's free page, with exactly the rules of a chapter's blocks (comments included). They count toward the project's 10 000-block limit.
+
+`Relation` = `{"id", "from", "to", "label", "note", "oneWay"?: true}`
+
+- `from` and `to` name two different elements. A relation naming a missing element, or the same element twice, is dropped, not rejected.
+- `label` ≤ 100 characters, `note` ≤ 100 000. Without `oneWay` the connection is mutual; with it, it points from `from` to `to`.
+
+Characters are never written to Read, Print, exported HTML or PDF. `cover` in the story list still comes from chapters only.
 
 ## Browser storage (editor)
 

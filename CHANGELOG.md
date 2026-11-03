@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Project format 2** for stories with characters. The first time a story gets a character, the previous file is kept as `story-project.v1.backup.json`. Older versions of Story Studio refuse to open such a story instead of deleting its characters when they save. Stories without characters are unchanged.
+
 ## 0.4.1 (2026-11-03)
 
 ### Fixed

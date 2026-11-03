@@ -120,6 +120,77 @@ class StoryFolderTest(TempHome):
                                                       {'id': 'c2', 'start': 9, 'end': 3}, {'id': 'c3', 'start': -2, 'end': 99}))
         self.assertEqual([(c['start'], c['end']) for c in clean['chapters'][0]['blocks'][0]['comments']], [(1, 4), (3, 3), (0, 4)])
 
+    def with_characters(self, elements, relations=None):
+        project = json.loads(story.encode(story.BLANK_PROJECT))
+        project['elements'] = elements
+        if relations is not None:
+            project['relations'] = relations
+        return project
+
+    def character(self, cid, **fields):
+        return {'id': cid, 'kind': 'character', 'name': 'Someone', **fields}
+
+    def test_characters_round_trip_and_make_format_2(self):
+        page = [{'id': 'b1', 'type': 'text', 'text': 'Hums when nervous', 'comments': [{'id': 'c1', 'start': 0, 'end': 4}]},
+                {'id': 'b2', 'type': 'image', 'file': 'sheet.png', 'caption': ''}]
+        pictures = [{'file': 'a.png'}, {'file': 'b.png', 'earlier': True}, {'file': 'a.png', 'earlier': True},
+                    {'file': 'c.png', 'earlier': False}]
+        project = self.with_characters(
+            [self.character('el-1', aka='Nickname', portrait='a.png', pictures=pictures, blocks=page, extra='dropped'),
+             self.character('el-2')],
+            [{'id': 'rel-1', 'from': 'el-1', 'to': 'el-2', 'label': 'sisters', 'note': 'Close', 'oneWay': False},
+             {'id': 'rel-2', 'from': 'el-2', 'to': 'el-1', 'label': 'admires', 'note': '', 'oneWay': True}])
+        clean = story.validate_project(project)
+        self.assertEqual(clean['version'], 2)
+        first = clean['elements'][0]
+        self.assertEqual(first['pictures'], [{'file': 'a.png'}, {'file': 'b.png', 'earlier': True}, {'file': 'c.png'}])
+        self.assertEqual((first['aka'], first['portrait'], len(first['blocks'])), ('Nickname', 'a.png', 2))
+        self.assertNotIn('extra', first)
+        self.assertEqual(clean['elements'][1], {'id': 'el-2', 'kind': 'character', 'name': 'Someone', 'pictures': [], 'blocks': []})
+        self.assertNotIn('oneWay', clean['relations'][0])
+        self.assertTrue(clean['relations'][1]['oneWay'])
+        self.assertEqual(story.validate_project(clean), clean)
+
+    def test_no_characters_stays_format_1(self):
+        clean = story.validate_project(self.with_characters([], []))
+        self.assertEqual((clean['version'], clean['elements'], clean['relations']), (1, [], []))
+
+    def test_connections_to_missing_characters_are_dropped(self):
+        clean = story.validate_project(self.with_characters([self.character('el-1')], [
+            {'id': 'rel-1', 'from': 'el-1', 'to': 'el-gone', 'label': 'x'},
+            {'id': 'rel-2', 'from': 'el-1', 'to': 'el-1', 'label': 'x'},
+            {'id': 'rel-3', 'from': None, 'to': 'el-1'}]))
+        self.assertEqual(clean['relations'], [])
+
+    def test_malformed_characters_are_refused(self):
+        for bad in (self.character('el-1', kind='place'), self.character('chapter-1'), self.character('bad id'),
+                    self.character('el-1', name=5), self.character('el-1', portrait='../x.png'),
+                    self.character('el-1', pictures=[{'file': 'https://x/y.png'}]),
+                    self.character('el-1', pictures=[{'file': 'a.png', 'earlier': 'yes'}]),
+                    self.character('el-1', pictures={}), self.character('el-1', blocks=[{'id': 'b', 'type': 'video'}]),
+                    self.character('el-1', blocks=[{'id': 'chapter-1', 'type': 'text', 'text': ''}]), 'el-1'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                story.validate_project(self.with_characters([bad]))
+        two = [self.character('el-1'), self.character('el-2')]
+        for bad in ({'id': 'rel-1', 'from': 'el-1', 'to': 'el-2', 'label': 'x' * 101},
+                    {'id': 'rel-1', 'from': 'el-1', 'to': 'el-2', 'oneWay': 1},
+                    {'id': 'el-1', 'from': 'el-1', 'to': 'el-2'}, 'rel-1'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                story.validate_project(self.with_characters(two, [bad]))
+        with self.assertRaises(ValueError):
+            story.validate_project(self.with_characters([self.character(f'el-{i}') for i in range(story.MAX_ELEMENTS + 1)]))
+
+    def test_character_pages_count_toward_the_block_limit(self):
+        blocks = [{'id': f'b{i}', 'type': 'text', 'text': ''} for i in range(10001)]
+        with self.assertRaises(ValueError):
+            story.validate_project(self.with_characters([self.character('el-1', blocks=blocks)]))
+
+    def test_newer_formats_are_refused_with_a_hint(self):
+        project = json.loads(story.encode(story.BLANK_PROJECT))
+        project['version'] = 3
+        with self.assertRaisesRegex(ValueError, 'newer version'):
+            story.validate_project(project)
+
     def test_malformed_comments_are_refused(self):
         good = {'id': 'c1', 'start': 0, 'end': 1}
         for bad in ({**good, 'start': True}, {**good, 'end': 1.0}, {**good, 'label': 'shout'}, {**good, 'id': 'bad id'},
@@ -132,6 +203,40 @@ class StoryFolderTest(TempHome):
         project['chapters'][0]['blocks'][0]['comments'] = {}
         with self.assertRaises(ValueError):
             story.validate_project(project)
+
+
+class FormatTwoSaveTest(TempHome):
+    def setUp(self):
+        super().setUp()
+        self.root = self.folder('Cast')
+        self.studio = story.prepare_story(self.root, 'Cast')
+
+    def test_first_character_backs_up_the_format_1_project_once(self):
+        original = (self.root / story.PROJECT_NAME).read_bytes()
+        project, revision = self.studio.read_project()
+        project['elements'] = [{'id': 'el-1', 'kind': 'character', 'name': 'One'}]
+        revision = self.studio.save(project, revision)
+        self.assertEqual((self.root / story.V1_BACKUP_NAME).read_bytes(), original)
+        self.assertEqual(self.studio.read_project()[0]['version'], 2)
+        project['elements'][0]['name'] = 'Renamed'
+        self.studio.save(project, revision)
+        self.assertEqual((self.root / story.V1_BACKUP_NAME).read_bytes(), original)  # Kept, never overwritten.
+
+    def test_a_format_2_story_never_goes_back_to_format_1(self):
+        project, revision = self.studio.read_project()
+        project['elements'] = [{'id': 'el-1', 'kind': 'character', 'name': 'One'}]
+        revision = self.studio.save(project, revision)
+        project = {**project, 'version': 1, 'elements': []}  # e.g. the last character deleted, or a stale copy
+        revision = self.studio.save(project, revision)
+        saved, current = self.studio.read_project()
+        self.assertEqual((saved['version'], saved['elements'], current), (2, [], revision))
+
+    def test_stories_without_characters_stay_format_1_without_a_backup(self):
+        project, revision = self.studio.read_project()
+        project['title'] = 'Retitled'
+        self.studio.save(project, revision)
+        self.assertEqual(self.studio.read_project()[0]['version'], 1)
+        self.assertFalse((self.root / story.V1_BACKUP_NAME).exists())
 
 
 class PathsTest(TempHome):

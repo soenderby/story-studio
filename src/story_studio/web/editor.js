@@ -9,8 +9,10 @@
   const UI_KEY = BASE_KEY + ':ui', HIDE_KEY = BASE_KEY + ':hide-images';
   const SIZES = ['small', 'medium', 'large', 'wide'];
   const LAYOUTS = ['row', 'grid'], MAX_GROUP = 12;
-  const SERVER_VERSION = 8; // 7: text blocks can carry comments. 8: PDF export. The editor runs under /s/<id>/ with relative API URLs.
+  const SERVER_VERSION = 9; // 7: text blocks can carry comments. 8: PDF export. 9: characters (project format 2). The editor runs under /s/<id>/ with relative API URLs.
   const COMMENT_LABELS = {note:'Note', change:'Change', question:'Question', keep:'Keep'}, MAX_COMMENTS = 500;
+  // Format 2 adds story elements (characters) and relations; apps that only know format 1 refuse it instead of dropping them.
+  const FORMAT_VERSIONS = [1, 2], ELEMENT_KINDS = ['character'], MAX_ELEMENTS = 500, MAX_RELATIONS = 5000, MAX_ELEMENT_PICTURES = 2000;
   const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i;
   const VIDEO_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#2b302d"/><path d="M6 4.5v7l5.5-3.5z" fill="#fff"/></svg>');
   const SIZE_LABELS = {small:'S', medium:'M', large:'L', wide:'Wide'};
@@ -165,7 +167,8 @@
     });
   }
   function validate(raw) {
-    if (!raw || raw.format !== 'illustrated-story-project' || raw.version !== 1) throw Error('This is not a supported Story Studio project (version 1).');
+    if (!raw || raw.format !== 'illustrated-story-project' || !Number.isInteger(raw.version)) throw Error('This is not a supported Story Studio project.');
+    if (!FORMAT_VERSIONS.includes(raw.version)) throw Error(raw.version > Math.max(...FORMAT_VERSIONS) ? 'This story was saved by a newer version of Story Studio. Update Story Studio to open it.' : 'This is not a supported Story Studio project.');
     const text = (value, max = 2000000) => {
       if (typeof value !== 'string' || value.length > max) throw Error('The project contains invalid or oversized text.');
       return value;
@@ -177,47 +180,92 @@
     };
     if (!Array.isArray(raw.chapters) || raw.chapters.length < 1 || raw.chapters.length > 500) throw Error('A project must have between 1 and 500 chapters.');
     let count = 0;
+    // A page's blocks: a chapter's or a character's. Every page counts toward the same block limit.
+    const pageBlocks = list => {
+      if (!Array.isArray(list)) throw Error('Invalid page blocks.');
+      return list.map(block => {
+        if (++count > 10000 || !block) throw Error('Too many blocks, or an invalid block.');
+        const blockId = id(block.id);
+        if (block.type === 'text') {
+          const clean = {id: blockId, type: 'text', text: text(block.text)};
+          if (block.comments !== undefined) {
+            const list = validComments(block.comments, clean.text, text, id);
+            if (list.length) clean.comments = list;
+          }
+          return clean;
+        }
+        let picture;
+        if (block.type === 'gallery') {
+          if (!Array.isArray(block.items) || block.items.length < 2 || block.items.length > MAX_GROUP) throw Error(`A picture group must contain 2–${MAX_GROUP} pictures.`);
+          if (!LAYOUTS.includes(block.layout)) throw Error('Unknown picture group layout.');
+          const items = block.items.map(item => {
+            if (!item || !validFile(item.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
+            return {file: item.file};
+          });
+          picture = {id: blockId, type: 'gallery', layout: block.layout, items, caption: text(block.caption, 300000)};
+        } else {
+          if (block.type !== 'image' || !validFile(block.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
+          picture = {id: blockId, type: 'image', file: block.file, caption: text(block.caption, 300000)};
+        }
+        if (block.size !== undefined) {
+          if (!SIZES.includes(block.size)) throw Error('Unknown image size.');
+          picture.size = block.size;
+        }
+        return picture;
+      });
+    };
     const clean = {
-      format: 'illustrated-story-project', version: 1,
+      format: 'illustrated-story-project', version: raw.version,
       id: typeof raw.id === 'string' ? raw.id.slice(0, 100) : uid(),
       title: text(raw.title, 10000), subtitle: text(raw.subtitle, 100000),
       chapters: raw.chapters.map(chapter => {
         if (!chapter || !Array.isArray(chapter.blocks)) throw Error('Invalid chapter.');
-        return {
-          id: id(chapter.id), title: text(chapter.title, 10000), notes: text(chapter.notes ?? '', 300000),
-          blocks: chapter.blocks.map(block => {
-            if (++count > 10000 || !block) throw Error('Too many blocks, or an invalid block.');
-            const blockId = id(block.id);
-            if (block.type === 'text') {
-              const clean = {id: blockId, type: 'text', text: text(block.text)};
-              if (block.comments !== undefined) {
-                const list = validComments(block.comments, clean.text, text, id);
-                if (list.length) clean.comments = list;
-              }
-              return clean;
-            }
-            let picture;
-            if (block.type === 'gallery') {
-              if (!Array.isArray(block.items) || block.items.length < 2 || block.items.length > MAX_GROUP) throw Error(`A picture group must contain 2–${MAX_GROUP} pictures.`);
-              if (!LAYOUTS.includes(block.layout)) throw Error('Unknown picture group layout.');
-              const items = block.items.map(item => {
-                if (!item || !validFile(item.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
-                return {file: item.file};
-              });
-              picture = {id: blockId, type: 'gallery', layout: block.layout, items, caption: text(block.caption, 300000)};
-            } else {
-              if (block.type !== 'image' || !validFile(block.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
-              picture = {id: blockId, type: 'image', file: block.file, caption: text(block.caption, 300000)};
-            }
-            if (block.size !== undefined) {
-              if (!SIZES.includes(block.size)) throw Error('Unknown image size.');
-              picture.size = block.size;
-            }
-            return picture;
-          })
-        };
+        const head = {id: id(chapter.id), title: text(chapter.title, 10000), notes: text(chapter.notes ?? '', 300000)};
+        return {...head, blocks: pageBlocks(chapter.blocks)};
       })
     };
+    if (raw.elements !== undefined) {
+      if (!Array.isArray(raw.elements) || raw.elements.length > MAX_ELEMENTS) throw Error(`A story can hold at most ${MAX_ELEMENTS} characters.`);
+      clean.elements = raw.elements.map(element => {
+        if (!element || !ELEMENT_KINDS.includes(element.kind)) throw Error('Invalid or unknown story element.');
+        const item = {id: id(element.id), kind: element.kind, name: text(element.name ?? '', 10000)};
+        if (element.aka !== undefined) item.aka = text(element.aka, 10000);
+        if (element.portrait != null) {
+          if (!validFile(element.portrait)) throw Error('A portrait must be a top-level image filename, not a path or URL.');
+          item.portrait = element.portrait;
+        }
+        const pictures = element.pictures ?? [];
+        if (!Array.isArray(pictures) || pictures.length > MAX_ELEMENT_PICTURES) throw Error(`A character can have at most ${MAX_ELEMENT_PICTURES} tagged pictures.`);
+        const seen = new Set();
+        item.pictures = [];
+        pictures.forEach(picture => {
+          if (!picture || !validFile(picture.file)) throw Error('Tagged pictures must be top-level image filenames, not paths or URLs.');
+          if (picture.earlier !== undefined && typeof picture.earlier !== 'boolean') throw Error('Invalid earlier-look setting.');
+          if (seen.has(picture.file)) return; // Tagging the same picture twice is harmless; keep the first.
+          seen.add(picture.file);
+          item.pictures.push(picture.earlier ? {file: picture.file, earlier: true} : {file: picture.file});
+        });
+        item.blocks = pageBlocks(element.blocks ?? []);
+        return item;
+      });
+    }
+    if (raw.relations !== undefined) {
+      if (!Array.isArray(raw.relations) || raw.relations.length > MAX_RELATIONS) throw Error(`A story can hold at most ${MAX_RELATIONS} connections.`);
+      const known = new Set((clean.elements || []).map(e => e.id));
+      clean.relations = [];
+      raw.relations.forEach(relation => {
+        if (!relation || typeof relation !== 'object') throw Error('Invalid connection.');
+        // A connection naming a missing character (or itself) is dropped, never rejected.
+        if (relation.from === relation.to || !known.has(relation.from) || !known.has(relation.to)) return;
+        const item = {id: id(relation.id), from: relation.from, to: relation.to, label: text(relation.label ?? '', 100), note: text(relation.note ?? '', 100000)};
+        if (relation.oneWay !== undefined) {
+          if (typeof relation.oneWay !== 'boolean') throw Error('Invalid connection direction.');
+          if (relation.oneWay) item.oneWay = true;
+        }
+        clean.relations.push(item);
+      });
+    }
+    if (clean.elements?.length || clean.relations?.length) clean.version = 2;
     if (raw.extraImages !== undefined) {
       if (!Array.isArray(raw.extraImages) || raw.extraImages.length > 10000) throw Error('Invalid added-image library.');
       clean.extraImages = raw.extraImages.map(image => {
