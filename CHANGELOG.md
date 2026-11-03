@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.1 (2026-11-03)
+
 ### Fixed
 
 - **Export PDF failed** with “msedge did not produce a PDF (exit code 0)” after Story Studio had updated itself. Edge inherited a Windows compatibility setting from the update installer and quit straight away.
