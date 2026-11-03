@@ -507,7 +507,8 @@
   /* ---------- Characters ---------- */
   function avatarHTML(e, extra = '') {
     const initial = esc((e.name.trim()[0] || '?').toUpperCase());
-    return `<span class="avatar ${extra}">${e.portrait ? `<img data-thumb="${esc(e.portrait)}" alt="">` : initial}</span>`;
+    const file = portraitOf(e);
+    return `<span class="avatar ${extra}">${file ? `<img data-thumb="${esc(file)}" alt="">` : initial}</span>`;
   }
   function elementStats(e) {
     const words = chapterWords(e), open = openComments(e), pictures = imageCount(e);
@@ -527,8 +528,80 @@
   function renderElementHead(e) {
     if (document.activeElement !== $('element-name')) $('element-name').value = e.name;
     if (document.activeElement !== $('element-aka')) $('element-aka').value = e.aka || '';
-    const portrait = $('element-portrait'), key = (e.portrait || '') + '|' + (e.name.trim()[0] || '');
+    const portrait = $('element-portrait'), key = (portraitOf(e) || '') + '|' + (e.name.trim()[0] || '');
     if (portrait.dataset.for !== key) { portrait.dataset.for = key; portrait.innerHTML = avatarHTML(e, 'element-portrait'); observeThumbs(portrait); }
+  }
+  /* Looks: pictures tagged with a character. The portrait is the chosen one, else the first current look. */
+  function portraitOf(e) { return e.portrait || e.pictures.find(x => !x.earlier)?.file || null; }
+  function tagsByFile() {
+    const tags = new Map();
+    elements().forEach(e => e.pictures.forEach(x => { if (!tags.has(x.file)) tags.set(x.file, []); tags.get(x.file).push(e.id); }));
+    return tags;
+  }
+  function orderedLooks(e) { return [...e.pictures.filter(x => !x.earlier), ...e.pictures.filter(x => x.earlier)]; }
+  function setTag(e, file, on) {
+    if (blocked || !e) return;
+    const index = e.pictures.findIndex(x => x.file === file);
+    if (on === index >= 0) return;
+    if (on && e.pictures.length >= MAX_ELEMENT_PICTURES) { notify(`A character can have at most ${MAX_ELEMENT_PICTURES} tagged pictures.`, true); return; }
+    mutate(() => {
+      if (on) e.pictures.push({file});
+      else { e.pictures.splice(index, 1); if (e.portrait === file) delete e.portrait; }
+    });
+  }
+  function setEarlier(e, file, on) {
+    const look = e?.pictures.find(x => x.file === file); if (!look || blocked) return;
+    mutate(() => {
+      if (on) { look.earlier = true; if (e.portrait === file) delete e.portrait; } else delete look.earlier;
+    });
+  }
+  function setPortrait(e, file) {
+    if (!e || blocked) return;
+    mutate(() => {
+      let look = e.pictures.find(x => x.file === file);
+      if (!look) { look = {file}; e.pictures.push(look); }
+      delete look.earlier; e.portrait = file;
+    });
+  }
+  function renderLooks(e) {
+    const looks = orderedLooks(e), portrait = portraitOf(e);
+    $('looks-count').textContent = looks.length || '';
+    $('looks-grid').innerHTML = looks.map(x => {
+      const title = esc(metadata(x.file).title), badge = x.file === portrait ? 'Portrait' : x.earlier ? 'Earlier look' : '';
+      return `<button type="button" class="look ${x.earlier ? 'earlier' : ''} ${x.file === portrait ? 'portrait' : ''}" data-look="${esc(x.file)}" title="${title}${x.earlier ? ' (earlier look)' : ''}" aria-label="${title}${badge ? ' · ' + badge : ''}">
+        <img data-thumb="${esc(x.file)}" alt=""><span class="look-title">${title}</span>${badge ? `<span class="look-badge">${badge}</span>` : ''}</button>`;
+    }).join('');
+    observeThumbs($('looks-grid'));
+  }
+  // Plain text for an image-generation prompt or a note: the name, the page's words in order, and the connections.
+  function elementText(e) {
+    const name = id => elementName(elements().find(x => x.id === id) || {name:''});
+    const lines = [elementName(e)];
+    if (e.aka?.trim()) lines.push('Also called: ' + e.aka.trim());
+    const body = e.blocks.map(b => (b.type === 'text' ? b.text : b.caption).trim()).filter(Boolean);
+    if (body.length) lines.push('', body.join('\n\n'));
+    const links = (project.relations || []).filter(r => r.from === e.id || r.to === e.id).map(r => {
+      const outgoing = r.from === e.id, other = name(outgoing ? r.to : r.from), label = r.label.trim() || 'connected';
+      const words = !r.oneWay ? `${other}: ${label}` : outgoing ? `${label} ${other} (one-way)` : `${other} ${label} ${elementName(e)} (one-way)`;
+      return '- ' + words + (r.note.trim() ? ' — ' + r.note.trim().replace(/\s*\n\s*/g, ' ') : '');
+    });
+    if (links.length) lines.push('', 'Connections:', ...links);
+    return lines.join('\n') + '\n';
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch {
+      const area = document.createElement('textarea'); area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
+      document.body.append(area); area.select();
+      const done = document.execCommand('copy'); area.remove(); return done;
+    }
+  }
+  function renderPersonFilter() {
+    const list = elements(), select = $('image-person'), old = select.value;
+    $('image-person-wrap').hidden = !list.length;
+    select.innerHTML = '<option value="">All characters</option><option value="*untagged">Not tagged with anyone</option>'
+      + list.map(e => `<option value="${esc(e.id)}">${esc(elementName(e))}</option>`).join('');
+    select.value = old === '*untagged' || list.some(e => e.id === old) ? old : '';
   }
   function addElement() {
     if (blocked) return;
@@ -658,7 +731,8 @@
     if (target && (target.chapter !== p.id || target.index > p.blocks.length)) target = null;
     $('title-page').hidden = view !== 'title'; $('chapter-editor').hidden = !editingView();
     $('chapter-head').hidden = onElement; $('element-head').hidden = !onElement; $('chapter-nav').hidden = onElement;
-    if (onElement) renderElementHead(p);
+    if (onElement) { renderElementHead(p); renderLooks(p); }
+    $('element-looks').hidden = !onElement;
     $('blocks').setAttribute('aria-label', onElement ? 'Character page' : 'Chapter content');
     $('chapter-editor').setAttribute('aria-label', onElement ? 'Character' : 'Selected chapter');
     $('outline-page').hidden = view !== 'outline'; $('disclaimer-page').hidden = view !== 'disclaimer';
@@ -679,7 +753,7 @@
     $('prev-chapter').textContent = prev ? '← ' + chapterName(prev) : '';
     $('next-chapter').textContent = next ? chapterName(next) + ' →' : '+ New chapter';
     $('notes-toggle').classList.toggle('has-notes', !!c.notes.trim());
-    renderChapters(); renderElements(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll(); renderComments();
+    renderChapters(); renderElements(); renderPersonFilter(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll(); renderComments();
     if (focus) {
       const article = $('blocks').querySelector(`[data-block="${CSS.escape(focus.block)}"]`);
       let element = article?.querySelector(focus.selector);
@@ -747,12 +821,14 @@
   }
   function updateLibrary() {
     const counts = countsByFile(), terms = $('image-search').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    const category = $('image-category').value, unused = $('unused-only').checked;
+    const category = $('image-category').value, unused = $('unused-only').checked, person = $('image-person').value;
+    const tags = person ? tagsByFile() : null;
+    const personOK = file => !person || (person === '*untagged' ? !tags.has(file) : !!tags.get(file)?.includes(person));
     const insertLabel = pick?.mode === 'replace' ? 'Use this' : pick?.mode === 'group-add' ? '+ Add to group' : '+ Insert';
     let visible = 0;
     libraryCards.forEach(card => {
       const file = card.dataset.file, n = counts.get(file) || 0, haystack = searchText(file);
-      card.hidden = !terms.every(t => haystack.includes(t)) || (!!category && card.dataset.category !== category) || (unused && n > 0);
+      card.hidden = !terms.every(t => haystack.includes(t)) || (!!category && card.dataset.category !== category) || (unused && n > 0) || !personOK(file);
       if (!card.hidden) visible++;
       const badge = card.querySelector('.used-badge'); badge.hidden = n === 0; badge.textContent = n === 1 ? 'Used' : `Used ×${n}`;
       card.querySelector('input').checked = selected.has(file);
@@ -1086,7 +1162,19 @@
       $('lb-image').src = imageURL(entry.file); $('lb-image').alt = info.title;
       $('lb-image').dataset.sourceFile = entry.file;
     }
-    $('lb-position').textContent = `${lightbox.index + 1} of ${lightbox.list.length}` + (lightbox.from === 'chapter' ? (isElement(page()) ? ' on this page' : ' in this chapter') : '');
+    $('lb-position').textContent = `${lightbox.index + 1} of ${lightbox.list.length}` + (lightbox.from === 'chapter' ? (isElement(page()) ? ' on this page' : ' in this chapter') : lightbox.from === 'looks' ? ' looks' : '');
+    const cast = elements(), tagged = tagsByFile().get(entry.file) || [];
+    $('lb-people').hidden = !cast.length;
+    $('lb-people-chips').innerHTML = cast.map(e => `<button type="button" data-tag="${esc(e.id)}" aria-pressed="${tagged.includes(e.id)}">${esc(elementName(e))}</button>`).join('');
+    // On a character's page, the viewer also sets that character's portrait and earlier looks.
+    const owner = isElement(page()) && view === 'element' ? page() : null, look = owner?.pictures.find(x => x.file === entry.file);
+    $('lb-look').hidden = !look;
+    if (look) {
+      const isPortrait = portraitOf(owner) === entry.file;
+      $('lb-look-label').textContent = elementName(owner) + '’s look';
+      $('lb-portrait').textContent = isPortrait ? 'Portrait ✓' : 'Make portrait'; $('lb-portrait').disabled = owner.portrait === entry.file;
+      $('lb-earlier').checked = !!look.earlier;
+    }
     $('lb-title').value = info.title; $('lb-category').value = info.category;
     $('lb-file').textContent = entry.file;
     const uses = [];
@@ -1720,6 +1808,16 @@
     $('add-chapter').addEventListener('click', () => addChapter());
     $('add-element').addEventListener('click', addElement);
     $('delete-element').addEventListener('click', () => { if (element()) removeElement(element().id); });
+    $('element-copy').addEventListener('click', async () => {
+      const e = element(); if (!e) return;
+      notify(await copyText(elementText(e)) ? `Copied “${elementName(e)}” as text.` : 'Could not copy to the clipboard.', false);
+    });
+    $('looks-grid').addEventListener('click', event => {
+      const look = event.target.closest('[data-look]'), e = element(); if (!look || !e) return;
+      const list = orderedLooks(e).map(x => ({file:x.file}));
+      openLightbox(list, list.findIndex(x => x.file === look.dataset.look), 'looks');
+    });
+    $('image-person').addEventListener('change', updateLibrary);
     $('element-list').addEventListener('click', event => {
       const select = event.target.closest('[data-element]'), move = event.target.closest('[data-element-move]');
       if (select) selectElement(select.dataset.element);
@@ -1950,6 +2048,13 @@
     });
     $('lb-title').addEventListener('input', event => setImageInfo(lightbox.list[lightbox.index].file, 'title', event.target.value));
     $('lb-category').addEventListener('input', event => setImageInfo(lightbox.list[lightbox.index].file, 'category', event.target.value));
+    $('lb-people-chips').addEventListener('click', event => {
+      const chip = event.target.closest('[data-tag]'); if (!chip) return;
+      const e = elements().find(x => x.id === chip.dataset.tag), file = lightbox.list[lightbox.index]?.file;
+      setTag(e, file, chip.getAttribute('aria-pressed') !== 'true'); renderLightbox();
+    });
+    $('lb-portrait').addEventListener('click', () => { setPortrait(element(), lightbox.list[lightbox.index]?.file); renderLightbox(); });
+    $('lb-earlier').addEventListener('change', event => { setEarlier(element(), lightbox.list[lightbox.index]?.file, event.target.checked); renderLightbox(); });
     $('lb-insert').addEventListener('click', () => { const file = lightbox.list[lightbox.index].file; $('lightbox').close(); chooseImage(file); });
     $('lb-replace').addEventListener('click', () => { const entry = lightbox.list[lightbox.index]; $('lightbox').close(); startPick('replace', entry.block, entry.item ?? null); });
     $('lb-used').addEventListener('click', event => {
@@ -1988,6 +2093,7 @@
     function dropTarget(event) {
       if (drag?.type === 'chapter') return event.target.closest('#chapter-list [data-chapter-item]');
       if (drag?.type === 'element') return event.target.closest('#element-list [data-element-item]');
+      if (drag?.type === 'image' && event.target.closest('#element-looks')) return $('element-looks');
       return event.target.closest('#blocks .gap, #blocks .block, #chapter-list [data-chapter-item]');
     }
     const lowerHalf = (el, event) => { const rect = el.getBoundingClientRect(); return event.clientY > rect.top + rect.height / 2; };
@@ -2017,6 +2123,14 @@
       if (!drag) return;
       event.preventDefault(); const item = drag, after = lowerHalf(dropEl, event), side = besideSide(dropEl, event); drag = null; clearDropMarks();
       if (side) { groupOnDrop(item, dropEl.dataset.block, side); return; }
+      if (dropEl.id === 'element-looks') {
+        const e = element();
+        if (e && item.type === 'image' && library.has(item.file)) {
+          if (e.pictures.some(x => x.file === item.file)) notify('That picture is already one of the looks.');
+          else { setTag(e, item.file, true); notify(`Tagged “${metadata(item.file).title}” as one of ${elementName(e)}’s looks.`, false, undoAction); }
+        }
+        return;
+      }
       if (item.type === 'element') {
         const list = project.elements || [], from = list.findIndex(e => e.id === item.id); let to = list.findIndex(e => e.id === dropEl.dataset.elementItem);
         if (from < 0 || to < 0 || from === to) return;

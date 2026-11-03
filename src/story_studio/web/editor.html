@@ -113,6 +113,7 @@
             <div class="chapter-heading">
               <span class="eyebrow">Character · private</span>
               <div class="chapter-actions">
+                <button id="element-copy" type="button" class="quiet" title="Copy the name, this page's text and the connections, e.g. to brief an image generator">Copy as text</button>
                 <button id="delete-element" type="button" class="quiet danger">Delete character</button>
               </div>
             </div>
@@ -138,6 +139,11 @@
           </div>
           </div>
           <div id="blocks" class="blocks" aria-label="Chapter content"></div>
+          <section id="element-looks" class="looks" aria-labelledby="looks-title" hidden>
+            <div class="looks-heading"><h2 id="looks-title">Looks <span id="looks-count" class="badge"></span></h2></div>
+            <p class="hint">Every picture tagged with this character. Tag pictures in the picture viewer under <strong>In this picture</strong>, or drag them here from the library. Open one to make it the portrait or mark it as an earlier look.</p>
+            <div id="looks-grid" class="looks-grid"></div>
+          </section>
           <nav id="chapter-nav" class="chapter-nav" aria-label="Chapter navigation"><button id="prev-chapter" type="button" class="quiet"></button><button id="next-chapter" type="button" class="quiet"></button></nav>
         </section>
       </div>
@@ -153,6 +159,7 @@
       <label class="search"><span class="sr-only">Search images</span><input id="image-search" type="search" placeholder="Search images…  ( / )" autocomplete="off"></label>
       <div class="library-filters">
         <label><span class="sr-only">Scene</span><select id="image-category"><option value="">All scenes</option></select></label>
+        <label id="image-person-wrap" hidden><span class="sr-only">Character</span><select id="image-person"><option value="">All characters</option></select></label>
         <label><span class="sr-only">Sort</span><select id="image-sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">By description</option></select></label>
       </div>
       <div class="library-options">
@@ -195,6 +202,14 @@
       <label class="field">Scene<input id="lb-category" list="scene-list" autocomplete="off" placeholder="e.g. Beach · evening"></label>
       <datalist id="scene-list"></datalist>
       <p class="hint">Descriptions help you search. They are saved with the project, never written into the image files.</p>
+      <div id="lb-people" class="lb-people" hidden>
+        <span class="field-label">In this picture</span>
+        <div id="lb-people-chips" class="people-chips" role="group" aria-label="Characters in this picture"></div>
+      </div>
+      <div id="lb-look" class="lb-look" hidden>
+        <span id="lb-look-label" class="field-label"></span>
+        <div class="lb-look-row"><button id="lb-portrait" type="button">Make portrait</button><label class="check-row"><input type="checkbox" id="lb-earlier"> Earlier look</label></div>
+      </div>
       <p id="lb-used" class="lb-used"></p>
       <p id="lb-file" class="lb-file"></p>
       <div class="lb-actions"><button id="lb-insert" type="button" class="primary">Insert</button><button id="lb-replace" type="button">Replace this image…</button></div>

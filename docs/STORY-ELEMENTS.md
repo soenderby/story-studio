@@ -96,7 +96,7 @@ New optional top-level fields:
 
 ## Building it
 
-Progress: steps 1–3 done (2026-11-03).
+Progress: steps 1–4 done (2026-11-03).
 
 1. **Format and server**: validation of `elements` and `relations`, format 2 and its backup, API 9, tests.
 2. **Pages**: make the block editor work on any page (chapter or element), not only chapters, including comments, undo, the Comments panel ("This page" / "Whole story", with character pages listed after the chapters), drag and drop, and "Move to…".

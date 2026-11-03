@@ -593,3 +593,22 @@ dialog.update-overlay h2 { margin-bottom: .6rem; }
   .preview figure.size-wide { width: 100%; left: 0; transform: none; }
   body { background: white; color: black; }
 }
+
+/* Looks: the pictures tagged with a character */
+.looks { margin-top: 2.5rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+.looks-heading h2 { font-size: 1.25rem; margin: 0 0 .3rem; }
+.looks.drag-over { outline: 3px dashed var(--focus); outline-offset: 6px; border-radius: 8px; }
+.looks-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .6rem; margin-top: .8rem; }
+.look { position: relative; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--soft); aspect-ratio: 1; }
+.look img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.look.earlier img { opacity: .45; filter: grayscale(.6); }
+.look-badge { position: absolute; left: .3rem; bottom: .3rem; font-size: .65rem; padding: .1rem .4rem; border-radius: 999px; background: var(--page); color: var(--ink); }
+.look.portrait { box-shadow: 0 0 0 2px var(--accent); }
+.look-title { display: none; padding: .5rem; font-size: .75rem; text-align: left; }
+body.hide-images .look img { display: none; }
+body.hide-images .look-title { display: block; }
+.field-label { display: block; font-size: .8rem; font-weight: 650; margin: .6rem 0 .3rem; }
+.people-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+.people-chips button { font-size: .78rem; padding: .2rem .6rem; border-radius: 999px; }
+.people-chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.lb-look-row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
