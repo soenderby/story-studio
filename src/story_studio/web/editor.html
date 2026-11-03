@@ -72,6 +72,9 @@
         <button id="disclaimer-item" type="button" class="title-page-item" title="Shown to readers before the title"><span class="chapter-number">Disclaimer · shown first</span><span id="disclaimer-item-name" class="chapter-stats"></span></button>
         <button id="title-page-item" type="button" class="title-page-item"><span class="chapter-number">Title page</span><span id="title-page-name" class="chapter-name"></span></button>
       </div>
+      <div class="pane-heading"><h2>Characters</h2><button id="add-element" type="button" title="Add a character">+ New</button></div>
+      <ol id="element-list" class="chapter-list element-list"></ol>
+      <p id="element-empty" class="hint element-empty">Get to know the people in your story: add a character, then write and collect pictures on their page.</p>
       <div class="pane-heading"><h2>Chapters</h2><button id="add-chapter" type="button" title="Add a chapter after the last one">+ New</button></div>
       <ol id="chapter-list" class="chapter-list"></ol>
       <p id="story-stats" class="hint"></p>
@@ -87,8 +90,8 @@
               <button id="outline-download" type="button" class="quiet">Download (.md)</button>
             </div>
           </div>
-          <p class="hint">Plan the whole story here: premise, characters, the arc, chapter beats, open questions. The outline is saved with the project, but it never appears in Read, Print or Export.</p>
-          <label><span class="sr-only">Story outline</span><textarea id="outline-text" class="outline-input" placeholder="Premise, characters, the shape of the story, chapter by chapter…"></textarea></label>
+          <p class="hint">Plan the whole story here: premise, the arc, chapter beats, open questions. The outline is saved with the project, but it never appears in Read, Print or Export.</p>
+          <label><span class="sr-only">Story outline</span><textarea id="outline-text" class="outline-input" placeholder="Premise, the shape of the story, chapter by chapter…"></textarea></label>
           <p id="outline-count" class="hint"></p>
         </section>
         <section id="disclaimer-page" class="disclaimer-page" aria-label="Disclaimer" hidden>
@@ -106,6 +109,22 @@
           <button id="title-page-continue" type="button" class="primary">Start writing →</button>
         </section>
         <section id="chapter-editor" aria-label="Selected chapter">
+          <div id="element-head" class="element-head" hidden>
+            <div class="chapter-heading">
+              <span class="eyebrow">Character · private</span>
+              <div class="chapter-actions">
+                <button id="delete-element" type="button" class="quiet danger">Delete character</button>
+              </div>
+            </div>
+            <div class="element-title">
+              <div id="element-portrait" class="element-portrait-wrap" aria-hidden="true"></div>
+              <div class="element-names">
+                <label><span class="sr-only">Name</span><input id="element-name" class="chapter-title-input" placeholder="Name, or a working name" autocomplete="off"></label>
+                <label><span class="sr-only">Also called</span><input id="element-aka" class="element-aka" placeholder="Also called… (nicknames, optional)" autocomplete="off"></label>
+              </div>
+            </div>
+          </div>
+          <div id="chapter-head">
           <div class="chapter-heading">
             <span id="chapter-position" class="eyebrow"></span>
             <div class="chapter-actions">
@@ -117,8 +136,9 @@
           <div id="notes-panel" class="notes" hidden>
             <label><span class="notes-label">Private notes <span class="hint">· never included in the finished story</span></span><textarea id="chapter-notes" rows="3" placeholder="Ideas, continuity notes, things to rewrite…"></textarea></label>
           </div>
+          </div>
           <div id="blocks" class="blocks" aria-label="Chapter content"></div>
-          <nav class="chapter-nav" aria-label="Chapter navigation"><button id="prev-chapter" type="button" class="quiet"></button><button id="next-chapter" type="button" class="quiet"></button></nav>
+          <nav id="chapter-nav" class="chapter-nav" aria-label="Chapter navigation"><button id="prev-chapter" type="button" class="quiet"></button><button id="next-chapter" type="button" class="quiet"></button></nav>
         </section>
       </div>
     </main>
@@ -149,7 +169,7 @@
         <div class="pane-tools"><button id="comments-close" type="button" class="icon" title="Close">×</button></div>
       </div>
       <div class="comments-filters">
-        <span class="segmented" role="group" aria-label="Show comments for"><button type="button" data-comment-scope="chapter">This chapter</button><button type="button" data-comment-scope="story">Whole story</button></span>
+        <span class="segmented" role="group" aria-label="Show comments for"><button type="button" id="comment-scope-page" data-comment-scope="chapter">This chapter</button><button type="button" data-comment-scope="story">Whole story</button></span>
         <label><input type="checkbox" id="comments-resolved"> Show resolved</label>
       </div>
       <div id="comment-list" class="comment-list"></div>

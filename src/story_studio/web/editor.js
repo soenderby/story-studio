@@ -34,7 +34,9 @@
   let server = null, serverDirty = false, serverPending = 0, serverQueue = Promise.resolve(), imageSignature = '';
   let polling = false, reloadingForUpdate = false;
   // Editing-surface state (not part of the project).
-  let view = 'chapter';            // 'chapter' or 'title'
+  let view = 'chapter';            // 'chapter', 'element' (a character page), 'title', 'outline' or 'disclaimer'
+  let activeElement = null;        // id of the open character page while view === 'element'
+  // `chapter` in caret, target and drag is a page id: a chapter's or a character's (ids are unique project-wide).
   let caret = null;                // {chapter, block, pos}: last cursor position in a text block
   let target = null;               // {chapter, index}: an explicitly marked insertion gap
   let pick = null;                 // {mode:'insert'|'replace', block, opened}
@@ -286,6 +288,22 @@
   /* ---------- Helpers ---------- */
   function chapter() { return project.chapters.find(c => c.id === activeChapter) || project.chapters[0]; }
   function chapterName(c) { return c.title || 'Untitled chapter'; }
+  /* Pages: chapters and character pages hold the same kind of blocks and are edited the same way. */
+  function elements() { return project.elements || []; }
+  function element() { return elements().find(e => e.id === activeElement) || null; }
+  function isElement(p) { return !!p?.kind; }
+  function page() { return view === 'element' && element() || chapter(); }
+  function pages() { return [...project.chapters, ...elements()]; }
+  function findPage(id) { return pages().find(p => p.id === id) || null; }
+  function pageOfBlock(id) { return pages().find(p => p.blocks.some(b => b.id === id)) || null; }
+  function elementName(e) { return e.name.trim() || 'Unnamed character'; }
+  function pageName(p) { return isElement(p) ? elementName(p) : chapterName(p); }
+  function pageLabel(p) { return isElement(p) ? 'Character · ' + elementName(p) : `Ch. ${project.chapters.indexOf(p) + 1} · ${chapterName(p)}`; }
+  function editingView() { return view === 'chapter' || view === 'element' && !!element(); }
+  // Opens a page for editing: a chapter, or a character page.
+  function showPage(p) {
+    if (isElement(p)) { activeElement = p.id; view = 'element'; } else { if (p) activeChapter = p.id; view = 'chapter'; }
+  }
   function metadata(file) { return library.get(file) || {file, title: file, category: 'Imported image reference'}; }
   function isPicture(b) { return b?.type === 'image' || b?.type === 'gallery'; }
   function blockFiles(b) { return b.type === 'image' ? [b.file] : b.type === 'gallery' ? b.items.map(x => x.file) : []; }
@@ -303,7 +321,7 @@
   const undoAction = {label:'Undo', run:() => stepHistory(undoStack, redoStack)};
   function history(group = null) {
     if (!group || group !== editGroup) {
-      undoStack.push({project: clone(project), activeChapter});
+      undoStack.push({project: clone(project), activeChapter, activeElement, view});
       if (undoStack.length > 100) undoStack.shift();
     }
     editGroup = group; redoStack = []; updateHistory();
@@ -315,7 +333,7 @@
   function saveBrowser() {
     if (blocked || !project) return false;
     try {
-      localStorage.setItem(KEY, JSON.stringify({project, writer, activeChapter, savedAt: new Date().toISOString(),
+      localStorage.setItem(KEY, JSON.stringify({project, writer, activeChapter, activeElement:view === 'element' ? activeElement : null, savedAt: new Date().toISOString(),
         pendingServer:serverMode && (serverDirty || diskSavedVersion !== serialize()), serverRevision:server?.revision}));
       browserSaved = true;
       browserStatus('Recovery copy saved in this browser · ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
@@ -486,6 +504,54 @@
     }).join('');
     observeThumbs($('chapter-list'));
   }
+  /* ---------- Characters ---------- */
+  function avatarHTML(e, extra = '') {
+    const initial = esc((e.name.trim()[0] || '?').toUpperCase());
+    return `<span class="avatar ${extra}">${e.portrait ? `<img data-thumb="${esc(e.portrait)}" alt="">` : initial}</span>`;
+  }
+  function elementStats(e) {
+    const words = chapterWords(e), open = openComments(e), pictures = imageCount(e);
+    const parts = [e.aka?.trim(), words ? `${words.toLocaleString()} words` : '', pictures ? `${pictures} picture${pictures === 1 ? '' : 's'}` : '', open ? `${open} comment${open === 1 ? '' : 's'}` : ''].filter(Boolean);
+    return parts.join(' · ') || 'Empty page';
+  }
+  function renderElements() {
+    const list = elements();
+    $('element-list').innerHTML = list.map((e, index) => `<li class="chapter-item element-item ${view === 'element' && e.id === activeElement ? 'active' : ''}" draggable="true" data-element-item="${esc(e.id)}">
+        <button type="button" class="chapter-select" data-element="${esc(e.id)}" ${view === 'element' && e.id === activeElement ? 'aria-current="true"' : ''}>
+          ${avatarHTML(e)}<span class="element-text"><span class="chapter-name">${esc(elementName(e))}</span><span class="chapter-stats">${esc(elementStats(e))}</span></span>
+        </button>
+        <div class="chapter-order"><button type="button" data-element-move="-1" data-id="${esc(e.id)}" aria-label="Move ${esc(elementName(e))} up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-element-move="1" data-id="${esc(e.id)}" aria-label="Move ${esc(elementName(e))} down" ${index === list.length - 1 ? 'disabled' : ''}>↓</button></div>
+      </li>`).join('');
+    observeThumbs($('element-list'));
+  }
+  function renderElementHead(e) {
+    if (document.activeElement !== $('element-name')) $('element-name').value = e.name;
+    if (document.activeElement !== $('element-aka')) $('element-aka').value = e.aka || '';
+    const portrait = $('element-portrait'), key = (e.portrait || '') + '|' + (e.name.trim()[0] || '');
+    if (portrait.dataset.for !== key) { portrait.dataset.for = key; portrait.innerHTML = avatarHTML(e, 'element-portrait'); observeThumbs(portrait); }
+  }
+  function addElement() {
+    if (blocked) return;
+    if (elements().length >= MAX_ELEMENTS) { notify(`A story can hold at most ${MAX_ELEMENTS} characters.`, true); return; }
+    const first = project.version === 1, e = {id:uid(), kind:'character', name:'', pictures:[], blocks:[]};
+    mutate(() => { (project.elements ||= []).push(e); project.version = 2; activeElement = e.id; view = 'element'; target = null; caret = null; });
+    window.scrollTo({top:0, behavior:'instant'});
+    $('element-name').focus();
+    // Older versions of Story Studio cannot open a story with characters; they would otherwise delete them when saving.
+    if (first) notify('This story now uses the format with characters. Older versions of Story Studio can no longer open it; the previous file is kept as story-project.v1.backup.json.');
+  }
+  function removeElement(id) {
+    const e = elements().find(x => x.id === id); if (!e) return;
+    const name = elementName(e);
+    mutate(() => {
+      project.elements.splice(project.elements.indexOf(e), 1);
+      if (project.relations) project.relations = project.relations.filter(r => r.from !== id && r.to !== id);
+      if (caret?.chapter === id) caret = null;
+      view = 'chapter'; target = null;
+    });
+    notify(`Deleted “${name}” and their page. Original image files are never deleted.`, false, undoAction);
+  }
+
   // Cheap refresh while typing: no DOM rebuilds, so focus and thumbnails stay put.
   function refreshLight() {
     $('chapter-list').querySelectorAll('[data-chapter-item]').forEach(item => {
@@ -493,6 +559,12 @@
       item.querySelector('.chapter-name').textContent = chapterName(c);
       item.querySelector('.chapter-stats').textContent = chapterStats(c);
     });
+    $('element-list').querySelectorAll('[data-element-item]').forEach(item => {
+      const e = elements().find(x => x.id === item.dataset.elementItem); if (!e) return;
+      item.querySelector('.chapter-name').textContent = elementName(e);
+      item.querySelector('.chapter-stats').textContent = elementStats(e);
+    });
+    if (view === 'element' && element()) renderElementHead(element());
     renderTitles(); renderCounts();
     $('notes-toggle').classList.toggle('has-notes', !!chapter().notes.trim());
   }
@@ -507,13 +579,14 @@
     document.title = 'Story Studio — ' + (project.title || 'Untitled story');
   }
   function gapHTML(index, count) {
-    const end = index === count, active = target && target.chapter === activeChapter && target.index === index;
+    const end = index === count, active = target && target.chapter === page().id && target.index === index;
+    const empty = isElement(page()) ? 'Nothing here yet. Write whatever you know about this character, in any order, and add pictures.' : 'This chapter is empty. Start writing, or add pictures.';
     return `<div class="gap ${end ? 'gap-end' : ''} ${active ? 'active' : ''}" data-gap="${index}">
       <div class="gap-line"></div>
-      ${end && !count ? '<p class="chapter-empty">This chapter is empty. Start writing, or add pictures.</p>' : ''}
+      ${end && !count ? `<p class="chapter-empty">${empty}</p>` : ''}
       <div class="gap-actions"><button type="button" data-gap-text title="Insert text here">+ Text</button><button type="button" data-gap-image title="Choose a picture for this spot">+ Image</button></div>
       <span class="gap-label">New images go here <button type="button" data-gap-clear aria-label="Clear the marked spot">×</button></span>
-      ${end ? '<p class="gap-hint hint">…or drag pictures from the library to any spot in the chapter.</p>' : ''}
+      ${end ? `<p class="gap-hint hint">…or drag pictures from the library to any spot ${isElement(page()) ? 'on this page' : 'in the chapter'}.</p>` : ''}
     </div>`;
   }
   // Videos stay muted in the editor and play while hovered; the viewer and the finished story give them full controls.
@@ -538,9 +611,9 @@
     const image = block.type === 'image', gallery = block.type === 'gallery', picture = image || gallery;
     const info = image ? metadata(block.file) : null, size = block.size || 'large';
     const kind = gallery ? 'group' : image ? (isVideo(block.file) ? 'video' : 'picture') : 'text';
-    const others = project.chapters.filter(c => c.id !== activeChapter);
+    const here = page(), chapters = project.chapters.filter(c => c !== here), characters = elements().filter(e => e !== here);
     const ratio = image && info.width && info.height ? `style="aspect-ratio:${info.width}/${info.height}"` : '';
-    const caretHere = !target && caret && caret.chapter === activeChapter && caret.block === block.id;
+    const caretHere = !target && caret && caret.chapter === here.id && caret.block === block.id;
     const sep = '<span class="sep"></span>';
     return `<article class="block block-${block.type} size-${size} ${caretHere ? 'insert-here' : ''}" data-block="${esc(block.id)}">
       <div class="block-tools" role="toolbar" aria-label="${gallery ? 'Picture group' : image ? 'Image' : 'Text'} block ${index + 1}">
@@ -559,7 +632,8 @@
             ${picture && isPicture(blocks[index - 1]) ? '<button type="button" data-action="group-prev">Group with the picture above</button>' : ''}
             ${picture && isPicture(blocks[index + 1]) ? '<button type="button" data-action="group-next">Group with the picture below</button>' : ''}
             ${gallery ? '<button type="button" data-action="ungroup">Ungroup into separate pictures</button>' : ''}
-            ${others.length ? `<span class="menu-label">Move to chapter</span>${others.map(c => `<button type="button" data-move-to="${esc(c.id)}">${esc(chapterName(c))}</button>`).join('')}` : ''}
+            ${chapters.length ? `<span class="menu-label">Move to chapter</span>${chapters.map(c => `<button type="button" data-move-to="${esc(c.id)}">${esc(chapterName(c))}</button>`).join('')}` : ''}
+            ${characters.length ? `<span class="menu-label">Move to character</span>${characters.map(e => `<button type="button" data-move-to="${esc(e.id)}">${esc(elementName(e))}</button>`).join('')}` : ''}
             <hr><button type="button" data-action="remove" class="danger">Delete ${kind}</button>
           </div>
         </div>
@@ -578,10 +652,15 @@
   }
   function renderEditor() {
     activeChapter = chapter().id;
-    const c = chapter(), focus = pendingFocus || captureFocus();
+    if (view === 'element' && !element()) view = 'chapter';
+    const c = chapter(), p = page(), onElement = isElement(p), focus = pendingFocus || captureFocus();
     pendingFocus = null;
-    if (target && (target.chapter !== c.id || target.index > c.blocks.length)) target = null;
-    $('title-page').hidden = view !== 'title'; $('chapter-editor').hidden = view !== 'chapter';
+    if (target && (target.chapter !== p.id || target.index > p.blocks.length)) target = null;
+    $('title-page').hidden = view !== 'title'; $('chapter-editor').hidden = !editingView();
+    $('chapter-head').hidden = onElement; $('element-head').hidden = !onElement; $('chapter-nav').hidden = onElement;
+    if (onElement) renderElementHead(p);
+    $('blocks').setAttribute('aria-label', onElement ? 'Character page' : 'Chapter content');
+    $('chapter-editor').setAttribute('aria-label', onElement ? 'Character' : 'Selected chapter');
     $('outline-page').hidden = view !== 'outline'; $('disclaimer-page').hidden = view !== 'disclaimer';
     $('title-page-item').classList.toggle('active', view === 'title');
     $('outline-item').classList.toggle('active', view === 'outline');
@@ -594,13 +673,13 @@
     $('chapter-title').value = c.title; $('chapter-notes').value = c.notes;
     const index = project.chapters.indexOf(c);
     $('chapter-position').textContent = `Chapter ${index + 1} of ${project.chapters.length}`;
-    $('blocks').innerHTML = c.blocks.map((b, i) => gapHTML(i, c.blocks.length) + blockHTML(b, i, c.blocks)).join('') + gapHTML(c.blocks.length, c.blocks.length);
+    $('blocks').innerHTML = p.blocks.map((b, i) => gapHTML(i, p.blocks.length) + blockHTML(b, i, p.blocks)).join('') + gapHTML(p.blocks.length, p.blocks.length);
     $('delete-chapter').disabled = project.chapters.length <= 1;
     const prev = project.chapters[index - 1], next = project.chapters[index + 1];
     $('prev-chapter').textContent = prev ? '← ' + chapterName(prev) : '';
     $('next-chapter').textContent = next ? chapterName(next) + ' →' : '+ New chapter';
     $('notes-toggle').classList.toggle('has-notes', !!c.notes.trim());
-    renderChapters(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll(); renderComments();
+    renderChapters(); renderElements(); renderTitles(); renderCounts(); updateLibrary(); updateHistory(); autosizeAll(); renderComments();
     if (focus) {
       const article = $('blocks').querySelector(`[data-block="${CSS.escape(focus.block)}"]`);
       let element = article?.querySelector(focus.selector);
@@ -635,7 +714,7 @@
     library.clear();
     DATA.images.forEach(image => library.set(image.file, image));
     (project.extraImages || []).forEach(image => { if (!serverMode || library.has(image.file)) library.set(image.file, {...library.get(image.file), ...image}); });
-    project.chapters.forEach(c => c.blocks.forEach(b => { if (b.type === 'image' && !library.has(b.file)) library.set(b.file, metadata(b.file)); }));
+    pages().forEach(c => c.blocks.forEach(b => { if (b.type === 'image' && !library.has(b.file)) library.set(b.file, metadata(b.file)); }));
     selected = new Set([...selected].filter(file => library.has(file)));
     const categories = [...new Set([...library.values()].map(x => x.category))].sort();
     const old = $('image-category').value;
@@ -730,7 +809,7 @@
 
   /* ---------- Insertion point ---------- */
   function insertionPoint() {
-    const c = chapter();
+    const c = page();
     if (target && target.chapter === c.id) return {index:Math.min(target.index, c.blocks.length), kind:'gap'};
     if (caret && caret.chapter === c.id) {
       const i = c.blocks.findIndex(b => b.id === caret.block);
@@ -744,24 +823,25 @@
     return {index:c.blocks.length, kind:'end'};
   }
   function describeInsertion() {
-    const point = insertionPoint(), c = chapter(), where = `in “${chapterName(c)}”`;
-    if (point.kind === 'gap') return point.index === c.blocks.length ? `at the end of “${chapterName(c)}”` : `at the marked spot ${where}`;
+    const point = insertionPoint(), c = page(), where = `in “${pageName(c)}”`;
+    if (point.kind === 'gap') return point.index === c.blocks.length ? `at the end of “${pageName(c)}”` : `at the marked spot ${where}`;
     if (point.kind === 'split') return `at your text cursor ${where} (splitting the paragraph)`;
     if (point.kind === 'before') return `before the text you were editing ${where}`;
     if (point.kind === 'after') return `after the text you were editing ${where}`;
-    return `at the end of “${chapterName(c)}”`;
+    return `at the end of “${pageName(c)}”`;
   }
   function updateInsertInfo() {
     const text = describeInsertion();
     $('insert-where').textContent = text;
     $('insert-reset').hidden = insertionPoint().kind === 'end';
+    $('insert-reset').textContent = isElement(page()) ? 'use end of page' : 'use end of chapter';
     const notInserting = pick?.mode === 'replace' || pick?.mode === 'group-add';
     $('insert-info').hidden = notInserting;
     $('lb-where').textContent = notInserting ? '' : 'Inserts ' + text + '.';
   }
   function clearInsertion() { target = null; caret = null; document.querySelectorAll('.gap.active, .block.insert-here').forEach(x => x.classList.remove('active', 'insert-here')); updateInsertInfo(); }
   function setTarget(index) {
-    target = {chapter:activeChapter, index}; caret = null;
+    target = {chapter:page().id, index}; caret = null;
     document.querySelectorAll('.block.insert-here').forEach(x => x.classList.remove('insert-here'));
     document.querySelectorAll('#blocks .gap').forEach(g => g.classList.toggle('active', Number(g.dataset.gap) === index));
     updateInsertInfo();
@@ -770,7 +850,7 @@
     const article = textarea.closest('[data-block]');
     if (!article || textarea.dataset.edit !== 'text') return;
     const changedBlock = !caret || caret.block !== article.dataset.block || target;
-    caret = {chapter:activeChapter, block:article.dataset.block, pos:textarea.selectionStart};
+    caret = {chapter:page().id, block:article.dataset.block, pos:textarea.selectionStart};
     if (target) { target = null; document.querySelectorAll('.gap.active').forEach(g => g.classList.remove('active')); }
     if (changedBlock) {
       document.querySelectorAll('.block.insert-here').forEach(x => x.classList.remove('insert-here'));
@@ -783,26 +863,26 @@
   function insertImages(files, asGroup = false) {
     files = files.filter(file => library.has(file));
     if (!files.length || blocked) return;
-    if (view !== 'chapter') view = 'chapter';
+    if (!editingView()) view = 'chapter';
     if (asGroup && files.length > MAX_GROUP) { notify(`A group holds at most ${MAX_GROUP} pictures, so only the first ${MAX_GROUP} were grouped.`, true); files = files.slice(0, MAX_GROUP); }
     const point = insertionPoint(), made = asGroup && files.length > 1
       ? [{id:uid(), type:'gallery', layout:files.length > 4 ? 'grid' : 'row', items:files.map(file => ({file})), caption:''}]
       : files.map(file => ({id:uid(), type:'image', file, caption:''}));
     mutate(() => {
-      const blocks = chapter().blocks;
+      const blocks = page().blocks;
       if (point.split) {
         const block = blocks.find(b => b.id === point.split.id);
         blocks.splice(point.index, 0, splitTextBlock(block, point.split.pos));
       }
       blocks.splice(point.index, 0, ...made);
-      target = {chapter:activeChapter, index:point.index + made.length}; caret = null;
+      target = {chapter:page().id, index:point.index + made.length}; caret = null;
       pendingScroll = made.map(b => b.id);
     });
-    notify(`Inserted ${made[0].type === 'gallery' ? `a group of ${files.length} pictures` : made.length === 1 ? '1 picture' : made.length + ' pictures'} into “${chapterName(chapter())}”.`, false, undoAction);
+    notify(`Inserted ${made[0].type === 'gallery' ? `a group of ${files.length} pictures` : made.length === 1 ? '1 picture' : made.length + ' pictures'} into “${pageName(page())}”.`, false, undoAction);
   }
   function replaceImage(blockId, file, item = null) {
-    const c = project.chapters.find(x => x.blocks.some(b => b.id === blockId)); if (!c || !library.has(file)) return;
-    activeChapter = c.id; view = 'chapter';
+    const c = pageOfBlock(blockId); if (!c || !library.has(file)) return;
+    showPage(c);
     mutate(() => {
       const block = c.blocks.find(b => b.id === blockId);
       if (block.type === 'gallery' && block.items[item]) block.items[item].file = file; else block.file = file;
@@ -825,7 +905,7 @@
     return group;
   }
   function mergeBlocks(first) {
-    const blocks = chapter().blocks, a = blocks[first], b = blocks[first + 1];
+    const blocks = page().blocks, a = blocks[first], b = blocks[first + 1];
     if (!isPicture(a) || !isPicture(b)) return;
     const items = [...asItems(a), ...asItems(b)];
     if (items.length > MAX_GROUP) { notify(`A group holds at most ${MAX_GROUP} pictures.`, true); return; }
@@ -834,20 +914,20 @@
     notify('Grouped. Use Row or Grid to change the layout.', false, undoAction);
   }
   function ungroup(id) {
-    const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id), group = blocks[index];
+    const blocks = page().blocks, index = blocks.findIndex(b => b.id === id), group = blocks[index];
     if (group?.type !== 'gallery') return;
     const singles = group.items.map((x, i) => ({id:uid(), type:'image', file:x.file, caption:i === group.items.length - 1 ? group.caption : '', ...(group.size ? {size:group.size} : {})}));
     mutate(() => { blocks.splice(index, 1, ...singles); pendingScroll = singles.map(b => b.id); });
     notify('Ungrouped. The group caption moved to the last picture.', false, undoAction);
   }
   function addToGroup(blockId, files) {
-    const c = project.chapters.find(x => x.blocks.some(b => b.id === blockId)), group = c?.blocks.find(b => b.id === blockId);
+    const c = pageOfBlock(blockId), group = c?.blocks.find(b => b.id === blockId);
     if (group?.type !== 'gallery') return;
     files = files.filter(file => library.has(file));
     const room = MAX_GROUP - group.items.length;
     if (files.length > room) { notify(`A group holds at most ${MAX_GROUP} pictures${room ? `, so only ${room} more could be added` : ''}.`, true); files = files.slice(0, room); }
     if (!files.length) return;
-    activeChapter = c.id; view = 'chapter';
+    showPage(c);
     mutate(() => { group.items.push(...files.map(file => ({file}))); pendingScroll = [blockId]; });
   }
   function groupItemAction(block, action, i) {
@@ -862,7 +942,7 @@
       mutate(() => {
         block.items.splice(i, 1);
         if (block.items.length === 1) {
-          const blocks = chapter().blocks, single = {id:block.id, type:'image', file:block.items[0].file, caption:block.caption};
+          const blocks = page().blocks, single = {id:block.id, type:'image', file:block.items[0].file, caption:block.caption};
           if (block.size) single.size = block.size;
           blocks.splice(blocks.indexOf(block), 1, single);
         }
@@ -872,8 +952,8 @@
   }
   // Drop a picture onto the left or right edge of another picture to group them.
   function groupOnDrop(item, targetId, side) {
-    const blocks = chapter().blocks, targetBlock = blocks.find(b => b.id === targetId); if (!isPicture(targetBlock)) return;
-    const source = item.type === 'block' ? project.chapters.find(c => c.id === item.chapter) : null;
+    const blocks = page().blocks, targetBlock = blocks.find(b => b.id === targetId); if (!isPicture(targetBlock)) return;
+    const source = item.type === 'block' ? findPage(item.chapter) : null;
     const moving = source?.blocks.find(b => b.id === item.id);
     if (item.type === 'block' && !isPicture(moving)) return;
     const incoming = moving ? asItems(moving) : [{file:item.file}], existing = asItems(targetBlock);
@@ -903,24 +983,24 @@
   }
   function addText(at, text = '') {
     const id = uid();
-    view = 'chapter';
+    if (!editingView()) view = 'chapter';
     pendingFocus = {block:id, selector:'textarea', start:0, reveal:true};
-    mutate(() => { chapter().blocks.splice(at, 0, {id, type:'text', text}); target = null; });
+    mutate(() => { page().blocks.splice(at, 0, {id, type:'text', text}); target = null; });
   }
   function moveBlock(id, delta) {
-    const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id), to = index + delta;
+    const blocks = page().blocks, index = blocks.findIndex(b => b.id === id), to = index + delta;
     if (index < 0 || to < 0 || to >= blocks.length) return;
     mutate(() => { const [b] = blocks.splice(index, 1); blocks.splice(to, 0, b); target = null; });
   }
   function removeBlock(id) {
-    const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
+    const blocks = page().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
     const kind = blocks[index].type === 'image' && isVideo(blocks[index].file) ? 'Video' : {image:'Picture', gallery:'Picture group', text:'Text'}[blocks[index].type];
     const notes = commentsOf(blocks[index]).length;
     mutate(() => { blocks.splice(index, 1); if (caret?.block === id) caret = null; target = null; });
     notify(notes ? `${kind} deleted, with its ${notes} comment${notes === 1 ? '' : 's'}.` : `${kind} deleted. Original image files are never deleted.`, false, undoAction);
   }
   function splitText(id, pos) {
-    const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
+    const blocks = page().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return;
     const block = blocks[index];
     mutate(() => {
       const after = splitTextBlock(block, pos);
@@ -929,7 +1009,7 @@
     });
   }
   function joinWithPrevious(id) {
-    const blocks = chapter().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return false;
+    const blocks = page().blocks, index = blocks.findIndex(b => b.id === id); if (index < 0) return false;
     const block = blocks[index], previous = blocks[index - 1];
     if (previous?.type === 'text') {
       const head = previous.text.replace(/\s+$/, ''), joiner = head && block.text ? '\n\n' : '';
@@ -953,6 +1033,14 @@
   function selectChapter(id, nextView = 'chapter') {
     if (id) activeChapter = id;
     view = nextView; editGroup = null; target = null; caret = null;
+    afterPageChange();
+  }
+  function selectElement(id) {
+    activeElement = id; view = 'element'; editGroup = null; target = null; caret = null;
+    afterPageChange();
+  }
+  function openPage(p) { if (isElement(p)) selectElement(p.id); else if (p) selectChapter(p.id); }
+  function afterPageChange() {
     renderEditor(); saveBrowser();
     window.scrollTo({top:0, behavior:'instant'});
     if (window.innerWidth <= 760 && ui.chapters) { ui.chapters = false; renderLibraryLayout(); }
@@ -998,12 +1086,14 @@
       $('lb-image').src = imageURL(entry.file); $('lb-image').alt = info.title;
       $('lb-image').dataset.sourceFile = entry.file;
     }
-    $('lb-position').textContent = `${lightbox.index + 1} of ${lightbox.list.length}` + (lightbox.from === 'chapter' ? ' in this chapter' : '');
+    $('lb-position').textContent = `${lightbox.index + 1} of ${lightbox.list.length}` + (lightbox.from === 'chapter' ? (isElement(page()) ? ' on this page' : ' in this chapter') : '');
     $('lb-title').value = info.title; $('lb-category').value = info.category;
     $('lb-file').textContent = entry.file;
     const uses = [];
-    project.chapters.forEach((c, i) => c.blocks.forEach(b => { if (blockFiles(b).includes(entry.file)) uses.push({c, i, b}); }));
-    $('lb-used').innerHTML = uses.length ? 'Used in: ' + uses.map(u => `<button type="button" data-goto-block="${esc(u.b.id)}" data-goto-chapter="${esc(u.c.id)}">Ch. ${u.i + 1} · ${esc(chapterName(u.c))}</button>`).join('') : `<span class="hint">Not used in the story yet.</span>`;
+    pages().forEach(c => c.blocks.forEach(b => { if (blockFiles(b).includes(entry.file)) uses.push({c, b}); }));
+    const inStory = uses.some(u => !isElement(u.c));
+    $('lb-used').innerHTML = (uses.length ? 'Used in: ' + uses.map(u => `<button type="button" data-goto-block="${esc(u.b.id)}" data-goto-chapter="${esc(u.c.id)}">${esc(pageLabel(u.c))}</button>`).join('') : '')
+      + (inStory ? '' : `<span class="hint">${uses.length ? ' · ' : ''}Not used in the story yet.</span>`);
     $('lb-prev').disabled = lightbox.index === 0; $('lb-next').disabled = lightbox.index >= lightbox.list.length - 1;
     const replacing = pick?.mode === 'replace';
     $('lb-insert').hidden = lightbox.from === 'chapter';
@@ -1034,7 +1124,7 @@
   function commentsOf(b) { return b?.type === 'text' ? b.comments || [] : []; }
   function openComments(c) { return c.blocks.reduce((n, b) => n + commentsOf(b).filter(x => !x.resolved).length, 0); }
   function findComment(id) {
-    for (const c of project.chapters) for (const b of c.blocks) {
+    for (const c of pages()) for (const b of c.blocks) {
       const comment = commentsOf(b).find(x => x.id === id);
       if (comment) return {chapter:c, block:b, comment};
     }
@@ -1129,7 +1219,7 @@
     if (reveal && card) card.scrollIntoView({block:'nearest'});
   }
   function addComment(blockId, start, end, inDialog = false) {
-    const found = project.chapters.flatMap(c => c.blocks.map(b => ({c, b}))).find(x => x.b.id === blockId);
+    const found = pages().flatMap(c => c.blocks.map(b => ({c, b}))).find(x => x.b.id === blockId);
     if (!found || found.b.type !== 'text' || blocked) return;
     const block = found.b;
     if (start === end) [start, end] = paragraphAt(block.text, start);
@@ -1151,7 +1241,7 @@
     const found = findComment(id); if (!found) return;
     if ($('comment-dialog').open) $('comment-dialog').close();
     if (previewing) showPreview(false);
-    activeChapter = found.chapter.id; view = 'chapter'; target = null;
+    showPage(found.chapter); target = null;
     activeComment = id;
     const {start, end} = found.comment;
     pendingFocus = {block:found.block.id, selector:'[data-edit="text"]', start, end};
@@ -1208,7 +1298,7 @@
     const current = block.text.slice(comment.start, comment.end);
     const quote = current ? esc(current.length > 400 ? current.slice(0, 400) + '…' : current)
       : `<del>${esc(comment.quote.slice(0, 400))}</del> <span class="comment-gone">the commented words were deleted</span>`;
-    const where = withChapter ? `Ch. ${project.chapters.indexOf(c) + 1} · ${esc(chapterName(c))}` : '';
+    const where = withChapter ? esc(pageLabel(c)) : '';
     const suggestion = comment.suggestion !== undefined ? `<div class="comment-suggestion">
         <label><span class="comment-sub">Replace with</span><textarea data-comment-field="suggestion" rows="1" placeholder="New wording (leave empty to delete the words)…">${esc(comment.suggestion)}</textarea></label>
         <div class="comment-row"><button type="button" class="primary" data-comment-action="accept">Accept change</button><button type="button" data-comment-action="reject">Discard suggestion</button></div>
@@ -1235,12 +1325,13 @@
   }
   function renderComments() {
     if (!project) return;
-    const open = project.chapters.reduce((n, c) => n + openComments(c), 0);
+    const open = pages().reduce((n, c) => n + openComments(c), 0);
     $('comments-count').textContent = open; $('comments-count').hidden = !open;
     if ($('comment-dialog').open) renderCommentDialog();
     if (previewing) refreshPreviewMarks();
     if (!ui.comments) return;
-    const story = ui.commentScope === 'story', chapters = story ? project.chapters : [chapter()];
+    const story = ui.commentScope === 'story', chapters = story ? pages() : [page()];
+    $('comment-scope-page').textContent = isElement(page()) ? 'This page' : 'This chapter';
     document.querySelectorAll('[data-comment-scope]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.commentScope === ui.commentScope)));
     $('comments-resolved').checked = showResolved;
     let shown = 0, resolvedHidden = 0;
@@ -1249,13 +1340,14 @@
         .filter(x => { if (x.comment.resolved && !showResolved) { resolvedHidden++; return false; } return true; });
       shown += items.length;
       if (!items.length) return '';
-      return (story ? `<h3 class="comment-chapter"><button type="button" class="link" data-comment-chapter="${esc(c.id)}">${project.chapters.indexOf(c) + 1}. ${esc(chapterName(c))}</button></h3>` : '') + items.map(x => commentCardHTML(x, story)).join('');
+      const heading = isElement(c) ? 'Character · ' + elementName(c) : `${project.chapters.indexOf(c) + 1}. ${chapterName(c)}`;
+      return (story ? `<h3 class="comment-chapter"><button type="button" class="link" data-comment-chapter="${esc(c.id)}">${esc(heading)}</button></h3>` : '') + items.map(x => commentCardHTML(x, story)).join('');
     }).join('');
-    const where = story ? 'in this story' : 'in this chapter';
+    const where = story ? 'in this story' : isElement(page()) ? 'on this page' : 'in this chapter';
     keepCommentFocus($('comment-list'), () => {
       $('comment-list').innerHTML = html || `<p class="comment-empty">No ${showResolved ? '' : 'open '}comments ${where}.${resolvedHidden ? ` ${resolvedHidden} resolved comment${resolvedHidden === 1 ? ' is' : 's are'} hidden.` : ''}</p>`;
     });
-    $('comments-total').textContent = story ? open : openComments(chapter());
+    $('comments-total').textContent = story ? open : openComments(page());
     autosizeComments($('comment-list'));
   }
   function scheduleComments() { clearTimeout(commentsTimer); commentsTimer = setTimeout(renderComments, 250); }
@@ -1271,7 +1363,7 @@
     const found = findComment($('comment-dialog').dataset.comment);
     if (!found) { $('comment-dialog').close(); return; }
     keepCommentFocus($('comment-dialog-body'), () => {
-      $('comment-dialog-body').innerHTML = `<span class="eyebrow">Comment · ${esc(chapterName(found.chapter))}</span>` + commentCardHTML(found)
+      $('comment-dialog-body').innerHTML = `<span class="eyebrow">Comment · ${esc(pageName(found.chapter))}</span>` + commentCardHTML(found)
         .replace('title="Show in the text"', 'title="Show this in the editor"');
     });
     autosizeComments($('comment-dialog-body'));
@@ -1295,7 +1387,7 @@
     const mirror = textarea.parentElement.querySelector('.prose-marks'), text = textarea.value, pos = textarea.selectionStart;
     mirror.innerHTML = esc(text.slice(0, pos)) + '<span class="caret-probe">​</span>' + esc(text.slice(pos));
     const rect = mirror.querySelector('.caret-probe').getBoundingClientRect();
-    const block = chapter().blocks.find(b => b.id === textarea.closest('[data-block]').dataset.block);
+    const block = page().blocks.find(b => b.id === textarea.closest('[data-block]').dataset.block);
     if (block) mirror.innerHTML = marksHTML(block);
     $('comment-float').dataset.mode = 'edit';
     placeCommentFloat(rect.top + window.scrollY, rect.left + window.scrollX + 40);
@@ -1507,6 +1599,7 @@
           const stored = JSON.parse(raw);
           project = validate(stored.project);
           if (project.chapters.some(c => c.id === stored.activeChapter)) restoredChapter = stored.activeChapter;
+          if (elements().some(e => e.id === stored.activeElement)) { activeElement = stored.activeElement; view = 'element'; }
         }
         catch (error) { recovery('corrupt', 'The stored draft could not be loaded. Automatic saving is paused to avoid overwriting it. Download the recovery copy before choosing a starting draft, or open a valid JSON project. ' + error.message, raw); }
       }
@@ -1535,7 +1628,9 @@
   }
   function stepHistory(from, to) {
     if (blocked || !from.length) return;
-    to.push({project:clone(project), activeChapter}); const snapshot = from.pop(); project = snapshot.project; activeChapter = snapshot.activeChapter;
+    to.push({project:clone(project), activeChapter, activeElement, view}); const snapshot = from.pop(); project = snapshot.project; activeChapter = snapshot.activeChapter;
+    // Like chapters, undo shows the page it changed: a character's or a chapter (renderEditor falls back if it is gone).
+    if (editingView() || view === 'element') { activeElement = snapshot.activeElement; view = snapshot.view === 'element' ? 'element' : 'chapter'; }
     editGroup = null; target = null; caret = null; buildLibrary(); changed(); if (previewing) showPreview(true);
     if ($('lightbox').open) renderLightbox();
   }
@@ -1557,6 +1652,11 @@
     });
     editField('project-title', 'project', 'title'); editField('project-subtitle', 'project', 'subtitle');
     editField('chapter-title', 'chapter', 'title'); editField('chapter-notes', 'chapter', 'notes');
+    ['name', 'aka'].forEach(field => $('element-' + field).addEventListener('input', event => {
+      const e = element(); if (blocked || !e) return;
+      history('element-' + field + e.id);
+      e[field] = event.target.value; changed(false);
+    }));
     document.addEventListener('focusout', () => { editGroup = null; });
 
     // Menus
@@ -1618,6 +1718,16 @@
       });
     });
     $('add-chapter').addEventListener('click', () => addChapter());
+    $('add-element').addEventListener('click', addElement);
+    $('delete-element').addEventListener('click', () => { if (element()) removeElement(element().id); });
+    $('element-list').addEventListener('click', event => {
+      const select = event.target.closest('[data-element]'), move = event.target.closest('[data-element-move]');
+      if (select) selectElement(select.dataset.element);
+      if (move) mutate(() => {
+        const list = project.elements, index = list.findIndex(e => e.id === move.dataset.id), to = index + Number(move.dataset.elementMove);
+        if (index >= 0 && to >= 0 && to < list.length) { const [e] = list.splice(index, 1); list.splice(to, 0, e); }
+      });
+    });
     $('notes-toggle').addEventListener('click', () => {
       const open = $('notes-panel').hidden; $('notes-panel').hidden = !open;
       $('notes-toggle').setAttribute('aria-expanded', String(open));
@@ -1639,7 +1749,7 @@
     $('blocks').addEventListener('input', event => {
       const field = event.target.dataset.edit, article = event.target.closest('[data-block]');
       if (!field || !article || blocked) return;
-      const block = chapter().blocks.find(b => b.id === article.dataset.block); if (!block) return;
+      const block = page().blocks.find(b => b.id === article.dataset.block); if (!block) return;
       history(block.id + field);
       const hadComments = commentsOf(block).length && field === 'text';
       if (hadComments) shiftComments(block, textChange(block.text, event.target.value, event.target.selectionEnd), event.target.value);
@@ -1651,7 +1761,7 @@
     ['focusin', 'click', 'keyup', 'select', 'pointerup'].forEach(type => $('blocks').addEventListener(type, event => {
       if (!event.target.matches?.('textarea[data-edit="text"]')) return;
       trackCaret(event.target);
-      const block = chapter().blocks.find(b => b.id === event.target.closest('[data-block]')?.dataset.block);
+      const block = page().blocks.find(b => b.id === event.target.closest('[data-block]')?.dataset.block);
       if (block && type !== 'focusin') setActiveComment(commentAtCaret(block, event.target.selectionStart));
       updateCommentFloat();
     }));
@@ -1682,7 +1792,7 @@
         return;
       }
       const article = event.target.closest('[data-block]'); if (!article) return;
-      const id = article.dataset.block, blocks = chapter().blocks, block = blocks.find(b => b.id === id); if (!block) return;
+      const id = article.dataset.block, blocks = page().blocks, block = blocks.find(b => b.id === id); if (!block) return;
       const hit = event.target.closest('.media-hidden')?.previousElementSibling || event.target;
       const viewItem = hit.closest('[data-view-item]');
       if (viewItem || hit.closest('[data-view-image]')) {
@@ -1697,9 +1807,9 @@
       if (size) { mutate(() => { if (size.dataset.size === 'large') delete block.size; else block.size = size.dataset.size; }); return; }
       const moveTo = event.target.closest('[data-move-to]');
       if (moveTo) {
-        const destination = project.chapters.find(c => c.id === moveTo.dataset.moveTo); if (!destination) return;
+        const destination = findPage(moveTo.dataset.moveTo); if (!destination) return;
         mutate(() => { const index = blocks.indexOf(block); if (index >= 0) destination.blocks.push(...blocks.splice(index, 1)); });
-        notify('Moved to the end of “' + chapterName(destination) + '”.', false, {label:'Go there', run:() => { selectChapter(destination.id); pendingScroll = [id]; renderEditor(); }});
+        notify('Moved to the end of “' + pageName(destination) + '”.', false, {label:'Go there', run:() => { openPage(destination); pendingScroll = [id]; renderEditor(); }});
         return;
       }
       const action = event.target.closest('[data-action]')?.dataset.action;
@@ -1796,7 +1906,7 @@
       root.addEventListener('click', event => {
         const card = event.target.closest('[data-comment-id]'), id = card?.dataset.commentId;
         const chapterLink = event.target.closest('[data-comment-chapter]');
-        if (chapterLink) { selectChapter(chapterLink.dataset.commentChapter); return; }
+        if (chapterLink) { openPage(findPage(chapterLink.dataset.commentChapter)); return; }
         if (!id) return;
         const label = event.target.closest('[data-comment-label]'), action = event.target.closest('[data-comment-action]');
         if (label) {
@@ -1846,16 +1956,18 @@
       const button = event.target.closest('[data-goto-block]'); if (!button) return;
       $('lightbox').close(); if (previewing) showPreview(false);
       if (document.body.classList.contains('library-expanded')) setLibraryExpanded(false);
-      activeChapter = button.dataset.gotoChapter; view = 'chapter'; target = null; caret = null;
+      showPage(findPage(button.dataset.gotoChapter)); target = null; caret = null;
       pendingScroll = [button.dataset.gotoBlock]; renderEditor();
     });
 
     // Drag and drop: library images, blocks and chapters
     document.addEventListener('dragstart', event => {
       const block = event.target.closest?.('[data-drag-block]'), image = event.target.closest?.('[data-drag-file]'), chapterItem = event.target.closest?.('[data-chapter-item]');
-      if (blocked || (!block && !image && !chapterItem)) return;
-      drag = block ? {type:'block', id:block.dataset.dragBlock, chapter:activeChapter}
-        : image ? {type:'image', file:image.dataset.dragFile} : {type:'chapter', id:chapterItem.dataset.chapterItem};
+      const elementItem = event.target.closest?.('[data-element-item]');
+      if (blocked || (!block && !image && !chapterItem && !elementItem)) return;
+      drag = block ? {type:'block', id:block.dataset.dragBlock, chapter:page().id}
+        : image ? {type:'image', file:image.dataset.dragFile} : elementItem ? {type:'element', id:elementItem.dataset.elementItem} : {type:'chapter', id:chapterItem.dataset.chapterItem};
+      if (elementItem) elementItem.classList.add('dragging');
       event.dataTransfer.setData('application/x-story-studio', JSON.stringify(drag)); event.dataTransfer.effectAllowed = drag.type === 'image' ? 'copy' : 'move';
       if (block) { const article = block.closest('.block'); article.classList.add('dragging'); event.dataTransfer.setDragImage(article, 20, 20); }
       if (chapterItem && !block && !image) chapterItem.classList.add('dragging');
@@ -1868,13 +1980,14 @@
       if (!item || (item.type !== 'image' && item.type !== 'block') || !el.matches('#blocks .block-image, #blocks .block-gallery')) return null;
       if (item.type === 'block') {
         if (item.id === el.dataset.block) return null;
-        if (!isPicture(project.chapters.find(c => c.id === item.chapter)?.blocks.find(b => b.id === item.id))) return null;
+        if (!isPicture(findPage(item.chapter)?.blocks.find(b => b.id === item.id))) return null;
       }
       const rect = el.getBoundingClientRect(), x = (event.clientX - rect.left) / rect.width;
       return x < .25 ? 'left' : x > .75 ? 'right' : null;
     }
     function dropTarget(event) {
       if (drag?.type === 'chapter') return event.target.closest('#chapter-list [data-chapter-item]');
+      if (drag?.type === 'element') return event.target.closest('#element-list [data-element-item]');
       return event.target.closest('#blocks .gap, #blocks .block, #chapter-list [data-chapter-item]');
     }
     const lowerHalf = (el, event) => { const rect = el.getBoundingClientRect(); return event.clientY > rect.top + rect.height / 2; };
@@ -1886,7 +1999,7 @@
       clearDropMarks();
       const side = besideSide(dropEl, event);
       if (side) dropEl.classList.add('drop-beside-' + side);
-      else if (dropEl.matches('.block') || (drag?.type === 'chapter')) dropEl.classList.add(lowerHalf(dropEl, event) ? 'drop-after' : 'drop-before');
+      else if (dropEl.matches('.block') || drag?.type === 'chapter' || drag?.type === 'element') dropEl.classList.add(lowerHalf(dropEl, event) ? 'drop-after' : 'drop-before');
       else dropEl.classList.add('drag-over');
     });
     document.addEventListener('dragleave', event => { const dropEl = dropTarget(event); if (dropEl && !dropEl.contains(event.relatedTarget)) dropEl.classList.remove(...DROP_MARKS); });
@@ -1897,13 +2010,21 @@
       if (!drag && externalFiles(event)) {
         event.preventDefault(); clearDropMarks();
         const names = [...event.dataTransfer.files].map(f => f.name), known = names.filter(n => library.has(n)), unknown = names.filter(n => !library.has(n));
-        if (known.length) { setTarget(dropEl.matches('.gap') ? Number(dropEl.dataset.gap) : chapter().blocks.findIndex(b => b.id === dropEl.dataset.block) + (lowerHalf(dropEl, event) ? 1 : 0)); insertImages(known); }
+        if (known.length) { setTarget(dropEl.matches('.gap') ? Number(dropEl.dataset.gap) : page().blocks.findIndex(b => b.id === dropEl.dataset.block) + (lowerHalf(dropEl, event) ? 1 : 0)); insertImages(known); }
         if (unknown.length) notify(`${unknown.length} file(s) are not in the story folder yet. Copy them into the folder first — they then appear in the library automatically.`, true);
         return;
       }
       if (!drag) return;
       event.preventDefault(); const item = drag, after = lowerHalf(dropEl, event), side = besideSide(dropEl, event); drag = null; clearDropMarks();
       if (side) { groupOnDrop(item, dropEl.dataset.block, side); return; }
+      if (item.type === 'element') {
+        const list = project.elements || [], from = list.findIndex(e => e.id === item.id); let to = list.findIndex(e => e.id === dropEl.dataset.elementItem);
+        if (from < 0 || to < 0 || from === to) return;
+        if (after) to++;
+        if (from < to) to--;
+        mutate(() => { const [e] = list.splice(from, 1); list.splice(to, 0, e); });
+        return;
+      }
       if (item.type === 'chapter') {
         const from = project.chapters.findIndex(c => c.id === item.id); let to = project.chapters.findIndex(c => c.id === dropEl.dataset.chapterItem);
         if (from < 0 || to < 0 || from === to) return;
@@ -1913,7 +2034,7 @@
         return;
       }
       const toChapter = dropEl.dataset.chapterItem;
-      const destination = toChapter ? project.chapters.find(c => c.id === toChapter) : chapter();
+      const destination = toChapter ? project.chapters.find(c => c.id === toChapter) : page();
       if (!destination) return;
       let at = dropEl.matches('.gap') ? Number(dropEl.dataset.gap)
         : dropEl.dataset.block ? destination.blocks.findIndex(b => b.id === dropEl.dataset.block) + (after ? 1 : 0) : destination.blocks.length;
@@ -1924,13 +2045,13 @@
           const block = {id:uid(), type:'image', file:item.file, caption:''};
           destination.blocks.splice(at, 0, block); if (!toChapter) pendingScroll = [block.id];
         } else if (item.type === 'block') {
-          const source = project.chapters.find(c => c.id === item.chapter); if (!source) return;
+          const source = findPage(item.chapter); if (!source) return;
           const index = source.blocks.findIndex(b => b.id === item.id); if (index < 0) return;
           const [block] = source.blocks.splice(index, 1); if (source === destination && index < at) at--; destination.blocks.splice(at, 0, block);
         }
         target = null;
       });
-      if (toChapter && toChapter !== activeChapter) notify(`Placed at the end of “${chapterName(destination)}”.`, false, undoAction);
+      if (toChapter && toChapter !== page().id) notify(`Placed at the end of “${chapterName(destination)}”.`, false, undoAction);
     });
 
     // History and keyboard
@@ -2117,6 +2238,7 @@
             else recovery('server-conflict', 'This browser has an unsaved recovery draft, but the project file changed too. Download the recovery copy before reloading the saved project.', JSON.stringify(cached, null, 2));
           }
           if (project.chapters.some(c => c.id === stored.activeChapter)) activeChapter = stored.activeChapter;
+          if (elements().some(e => e.id === stored.activeElement)) { activeElement = stored.activeElement; view = 'element'; }
         }
       } catch { /* A corrupt browser cache never replaces the validated disk project. */ }
       buildLibrary(); renderEditor();

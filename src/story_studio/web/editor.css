@@ -140,6 +140,28 @@ body.no-chapters .chapters, body.no-library .library { display: none; }
 .chapter-order button { padding: 0 .4rem; font-size: .7rem; }
 #story-stats { border-top: 1px solid var(--line); padding-top: .8rem; }
 
+/* Characters: sidebar list and the character page header */
+.element-list { margin-bottom: .6rem; }
+.element-item .chapter-select { display: flex; align-items: center; gap: .55rem; padding: .4rem .55rem; }
+.element-item.active .chapter-select { border-color: var(--accent); background: var(--page); box-shadow: 0 0 0 1px var(--accent); }
+.element-item .chapter-name { margin: 0; }
+.element-text { min-width: 0; }
+.element-text .chapter-stats { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font: 600 .9rem/1 var(--serif);
+}
+.avatar :is(img, video) { width: 100%; height: 100%; object-fit: cover; }
+.element-empty { margin: -.2rem 0 1rem; }
+.element-list:not(:empty) + .element-empty { display: none; }
+.element-title { display: flex; align-items: center; gap: 1.1rem; margin: .4rem 0 1rem; }
+.element-portrait { width: 96px; height: 96px; font-size: 2.2rem; }
+.element-names { flex: 1; min-width: 0; }
+.element-names .chapter-title-input { margin: 0; }
+.element-aka { width: 100%; border: 0; background: transparent; padding: .2rem 0; color: var(--muted); font: 1rem/1.5 var(--sans); border-radius: 4px; outline-offset: 6px; }
+.element-aka:focus { outline: 1px dashed var(--line-strong); }
+body.hide-images .avatar :is(img, video) { display: none; }
+
 /* ---------- Writing surface ---------- */
 .page { max-width: 780px; margin: 0 auto; padding: 2.2rem 2.5rem 8rem; }
 .chapter-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; min-height: 2rem; }
