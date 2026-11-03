@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 (2026-11-03)
+
 ### New
 
 - **Characters.** Give each character a page of their own (left sidebar, above the chapters): a free page like a chapter, for text, pictures, captions and comments, with no forms to fill in. Add an *also called* line for nicknames. Characters are private and never appear in Read, Print or exports.
