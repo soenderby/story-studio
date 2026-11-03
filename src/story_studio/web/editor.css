@@ -153,7 +153,7 @@ body.no-chapters .chapters, body.no-library .library { display: none; }
 }
 .avatar :is(img, video) { width: 100%; height: 100%; object-fit: cover; }
 .element-empty { margin: -.2rem 0 1rem; }
-.element-list:not(:empty) + .element-empty { display: none; }
+.element-list:not(:empty) ~ .element-empty { display: none; }
 .element-title { display: flex; align-items: center; gap: 1.1rem; margin: .4rem 0 1rem; }
 .element-portrait { width: 96px; height: 96px; font-size: 2.2rem; }
 .element-names { flex: 1; min-width: 0; }
@@ -612,3 +612,32 @@ body.hide-images .look-title { display: block; }
 .people-chips button { font-size: .78rem; padding: .2rem .6rem; border-radius: 999px; }
 .people-chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .lb-look-row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+
+/* Relationship map */
+.map-item { margin: -.3rem 0 1rem; }
+.map-item.active { border-color: var(--accent); background: var(--page); box-shadow: 0 0 0 1px var(--accent); }
+.map-heading { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.map { position: relative; isolation: isolate; margin-top: .8rem; border: 1px solid var(--line); border-radius: 10px; background: var(--page); overflow: hidden; }
+.map svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+.map svg .rel-hit { pointer-events: stroke; }
+.map .rel-line { fill: none; stroke: var(--line-strong); stroke-width: 1.6; }
+.map .rel-line.one-way { stroke-dasharray: 5 4; }
+.map .rel-hit { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; pointer-events: stroke; }
+.map .rel.selected .rel-line, .map .rel:hover .rel-line { stroke: var(--accent); stroke-width: 2.4; }
+.map .rel-arrow { fill: var(--line-strong); }
+.map-node { position: absolute; margin: -32px 0 0 -60px; display: flex; flex-direction: column; align-items: center; gap: .25rem; border: 0; background: none; padding: 0; width: 120px; }
+.map-node .avatar { position: relative; z-index: 2; width: 64px; height: 64px; font-size: 1.5rem; box-shadow: 0 0 0 3px var(--page), 0 1px 4px #0003; }
+.map-node.centre .avatar { box-shadow: 0 0 0 3px var(--accent); }
+.map-node-name { position: relative; z-index: 0; font-size: .78rem; font-weight: 650; line-height: 1.2; text-align: center; background: var(--page); padding: 0 .3rem; border-radius: 4px; overflow-wrap: anywhere; }
+.map-small .map-node { margin: -26px 0 0 -50px; width: 100px; }
+.map-small .map-node .avatar { width: 52px; height: 52px; font-size: 1.2rem; }
+.rel-label { position: absolute; z-index: 3; transform: translate(-50%, -50%); font-size: .72rem; padding: .05rem .45rem; border-radius: 999px; border: 1px solid var(--line); background: var(--page); color: var(--ink); white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.rel-label.selected, .rel-label:hover { border-color: var(--accent); color: var(--accent); }
+.rel-label.empty { color: var(--muted); font-style: italic; }
+.map-empty { position: absolute; inset: auto 0 .8rem; text-align: center; color: var(--muted); font-size: .85rem; margin: 0; }
+.relation-editor, .connection-form { margin-top: .8rem; padding: .9rem 1rem; border: 1px solid var(--line); border-radius: 10px; background: var(--page); display: flex; flex-direction: column; gap: .5rem; }
+.relation-editor .rel-title { font-weight: 650; }
+.rel-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.rel-row input[type=text], .rel-row select { flex: 1; min-width: 9rem; }
+.relation-editor textarea { width: 100%; min-height: 4rem; field-sizing: content; resize: vertical; line-height: 1.6; }
+.rel-actions { display: flex; justify-content: space-between; gap: .5rem; }

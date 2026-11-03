@@ -23,7 +23,7 @@ Opens in the middle, where chapters open.
 - **Comments** work on its text blocks the same way as in chapters.
 - **Looks**: every picture tagged with this character (see below), as a gallery. Click one to view it; **Make portrait** in the viewer sets the main portrait. Pictures placed on the free page are not tagged automatically, so the free page stays free.
 - **Earlier looks**: iterating means older pictures stop being right but are still worth keeping. Any picture in Looks can be marked **Earlier look** (and back). Earlier looks stay in the gallery, dimmed and after the current ones, and cannot be the portrait (marking the portrait as earlier clears the portrait).
-- **Copy as text**: puts the character on the clipboard as plain text, ready to paste into an image-generation prompt or a note: name, *also called*, the free page's text and captions in order, and the connections in words ("Partner of …", "Secretly admires … (one-way)"). Picture files and comments are left out.
+- **Copy as text**: puts the character on the clipboard as plain text, ready to paste into an image-generation prompt or a note: name, *also called*, the free page's text and captions in order, and the connections ("A ↔ B: sisters — note", "A → B: admires (one-way)"). Picture files and comments are left out.
 - **Connections**: this character's relationships, as a small map centred on them. **+ Connection** picks another character, a word and a note.
 
 ### Pictures
@@ -36,7 +36,8 @@ Opens in the middle, where chapters open.
 ### Relationship map
 
 - One map for the whole cast: portraits with names, joined by lines. Characters without connections are shown too.
-- **Automatic layout** (force-directed, seeded, so the same cast always lays out the same way and does not jump around between visits). No manual positioning in this version.
+- **Automatic layout**: a stress layout, where screen distance follows how many steps apart two characters are (unconnected characters sit just beyond the rest), turned so its longest spread runs across, then nudged so portraits never overlap. It starts from the sidebar order, so the same cast always lays out the same way. No manual positioning in this version.
+- On a character page, **Connections** shows that character in the middle with everyone they are connected to around them.
 - Each line carries **one word** ("sisters", "rivals"). Clicking a line shows its **note**, editable there.
 - A connection is either **mutual** (a plain line) or **one-way** (an arrow: "A secretly admires B"). Two one-way connections between the same pair are drawn as two curved arrows, so B can feel differently about A.
 - Click a portrait to open that character's page.
@@ -96,7 +97,7 @@ New optional top-level fields:
 
 ## Building it
 
-Progress: steps 1–4 done (2026-11-03).
+Progress: steps 1–5 done (2026-11-03).
 
 1. **Format and server**: validation of `elements` and `relations`, format 2 and its backup, API 9, tests.
 2. **Pages**: make the block editor work on any page (chapter or element), not only chapters, including comments, undo, the Comments panel ("This page" / "Whole story", with character pages listed after the chapters), drag and drop, and "Move to…".

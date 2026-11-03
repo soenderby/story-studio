@@ -74,6 +74,7 @@
       </div>
       <div class="pane-heading"><h2>Characters</h2><button id="add-element" type="button" title="Add a character">+ New</button></div>
       <ol id="element-list" class="chapter-list element-list"></ol>
+      <button id="map-item" type="button" class="title-page-item private-item map-item" hidden><span class="chapter-number">Relationship map · private</span><span id="map-item-stats" class="chapter-stats"></span></button>
       <p id="element-empty" class="hint element-empty">Get to know the people in your story: add a character, then write and collect pictures on their page.</p>
       <div class="pane-heading"><h2>Chapters</h2><button id="add-chapter" type="button" title="Add a chapter after the last one">+ New</button></div>
       <ol id="chapter-list" class="chapter-list"></ol>
@@ -100,6 +101,16 @@
           <label><span class="sr-only">Disclaimer text</span><textarea id="disclaimer-text" class="disclaimer-input" placeholder="For example: This story is intended for adult readers. It contains…"></textarea></label>
           <label class="check-row"><input type="checkbox" id="disclaimer-gate"> <span>Readers must click <strong>Continue</strong> before the story appears <span class="hint">(exported HTML)</span></span></label>
           <button id="disclaimer-continue" type="button" class="primary">Go to the title page →</button>
+        </section>
+        <section id="map-page" class="map-page" aria-label="Relationship map" hidden>
+          <div class="chapter-heading map-heading">
+            <span class="eyebrow">Relationship map · private</span>
+            <div class="chapter-actions"><button type="button" class="quiet" data-add-connection>+ Connection</button></div>
+          </div>
+          <p class="hint">Everyone in the story and how they are connected. Click a line or its word to see and edit its note; click a portrait to open that character.</p>
+          <div class="connection-form-slot"></div>
+          <div id="map-canvas" class="map"></div>
+          <div class="relation-editor-slot"></div>
         </section>
         <section id="title-page" class="title-page" aria-label="Title page" hidden>
           <span class="eyebrow">Title page</span>
@@ -143,6 +154,12 @@
             <div class="looks-heading"><h2 id="looks-title">Looks <span id="looks-count" class="badge"></span></h2></div>
             <p class="hint">Every picture tagged with this character. Tag pictures in the picture viewer under <strong>In this picture</strong>, or drag them here from the library. Open one to make it the portrait or mark it as an earlier look.</p>
             <div id="looks-grid" class="looks-grid"></div>
+          </section>
+          <section id="element-links" class="looks links" aria-labelledby="links-title" hidden>
+            <div class="looks-heading map-heading"><h2 id="links-title">Connections <span id="links-count" class="badge"></span></h2><button type="button" class="quiet" data-add-connection>+ Connection</button></div>
+            <div class="connection-form-slot"></div>
+            <div id="links-canvas" class="map map-small"></div>
+            <div class="relation-editor-slot"></div>
           </section>
           <nav id="chapter-nav" class="chapter-nav" aria-label="Chapter navigation"><button id="prev-chapter" type="button" class="quiet"></button><button id="next-chapter" type="button" class="quiet"></button></nav>
         </section>

@@ -46,6 +46,7 @@
   const ui = Object.assign({chapters:true, library:true, comments:false, commentScope:'chapter', commentMarks:true, readComments:false,
     thumb:'m', sort:'newest', libraryWidth:400}, readUI());
   let activeComment = null, showResolved = false, commentsTimer = null;
+  let selectedRelation = null, connectionForm = null; // the open connection editor; the "+ Connection" form ({from})
 
   function readUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {} }
@@ -524,6 +525,9 @@
         <div class="chapter-order"><button type="button" data-element-move="-1" data-id="${esc(e.id)}" aria-label="Move ${esc(elementName(e))} up" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-element-move="1" data-id="${esc(e.id)}" aria-label="Move ${esc(elementName(e))} down" ${index === list.length - 1 ? 'disabled' : ''}>↓</button></div>
       </li>`).join('');
     observeThumbs($('element-list'));
+    $('map-item').hidden = !list.length;
+    const count = relations().length;
+    $('map-item-stats').textContent = count ? `${count} connection${count === 1 ? '' : 's'}` : 'No connections yet';
   }
   function renderElementHead(e) {
     if (document.activeElement !== $('element-name')) $('element-name').value = e.name;
@@ -581,8 +585,8 @@
     const body = e.blocks.map(b => (b.type === 'text' ? b.text : b.caption).trim()).filter(Boolean);
     if (body.length) lines.push('', body.join('\n\n'));
     const links = (project.relations || []).filter(r => r.from === e.id || r.to === e.id).map(r => {
-      const outgoing = r.from === e.id, other = name(outgoing ? r.to : r.from), label = r.label.trim() || 'connected';
-      const words = !r.oneWay ? `${other}: ${label}` : outgoing ? `${label} ${other} (one-way)` : `${other} ${label} ${elementName(e)} (one-way)`;
+      const label = r.label.trim() || 'connected';
+      const words = r.oneWay ? `${name(r.from)} → ${name(r.to)}: ${label} (one-way)` : `${name(r.from)} ↔ ${name(r.to)}: ${label}`;
       return '- ' + words + (r.note.trim() ? ' — ' + r.note.trim().replace(/\s*\n\s*/g, ' ') : '');
     });
     if (links.length) lines.push('', 'Connections:', ...links);
@@ -602,6 +606,163 @@
     select.innerHTML = '<option value="">All characters</option><option value="*untagged">Not tagged with anyone</option>'
       + list.map(e => `<option value="${esc(e.id)}">${esc(elementName(e))}</option>`).join('');
     select.value = old === '*untagged' || list.some(e => e.id === old) ? old : '';
+  }
+  /* ---------- Relationships ----------
+     A relation joins two characters with one word and a note. Without oneWay it is mutual; with it, it points from → to. */
+  function relations() { return project.relations || []; }
+  function relationsOf(id) { return relations().filter(r => r.from === id || r.to === id); }
+  // Stress layout: screen distances follow how many steps apart two characters are in the graph (characters with no
+  // path between them sit one step beyond the farthest pair). Started from a circle in sidebar order, so the same cast
+  // always lands in the same places.
+  function graphLayout(ids, rels) {
+    const n = ids.length, index = new Map(ids.map((id, i) => [id, i]));
+    const p = ids.map((id, i) => { const a = 2 * Math.PI * i / n - Math.PI / 2; return {x:Math.cos(a), y:Math.sin(a)}; });
+    if (n < 3) return p.map(q => n === 1 ? {x:0, y:0} : q);
+    const next = ids.map(() => new Set());
+    rels.forEach(r => { const a = index.get(r.from), b = index.get(r.to); next[a].add(b); next[b].add(a); });
+    const dist = ids.map((_, i) => {
+      const d = new Array(n).fill(Infinity); d[i] = 0;
+      for (const queue = [i]; queue.length;) { const v = queue.shift(); next[v].forEach(w => { if (d[w] === Infinity) { d[w] = d[v] + 1; queue.push(w); } }); }
+      return d;
+    });
+    const far = Math.max(1, ...dist.flat().filter(Number.isFinite)) + 1;
+    dist.forEach(row => row.forEach((d, j) => { if (!Number.isFinite(d)) row[j] = far; }));
+    p.forEach(q => { q.x *= far / 2; q.y *= far / 2; });
+    for (let step = 0; step < 300; step++) {
+      for (let i = 0; i < n; i++) {
+        let sx = 0, sy = 0, sw = 0;
+        for (let j = 0; j < n; j++) {
+          if (i === j) continue;
+          const dx = p[i].x - p[j].x, dy = p[i].y - p[j].y, len = Math.hypot(dx, dy) || 1e-6, w = dist[i][j] ** -2;
+          sx += w * (p[j].x + dist[i][j] * dx / len); sy += w * (p[j].y + dist[i][j] * dy / len); sw += w;
+        }
+        p[i].x = sx / sw; p[i].y = sy / sw;
+      }
+    }
+    // Turn the picture so its longest spread runs across: maps are wider than they are tall.
+    const mx = p.reduce((t, q) => t + q.x, 0) / n, my = p.reduce((t, q) => t + q.y, 0) / n;
+    let sxx = 0, syy = 0, sxy = 0;
+    p.forEach(q => { sxx += (q.x - mx) ** 2; syy += (q.y - my) ** 2; sxy += (q.x - mx) * (q.y - my); });
+    const angle = -0.5 * Math.atan2(2 * sxy, sxx - syy), cos = Math.cos(angle), sin = Math.sin(angle);
+    return p.map(q => ({x:(q.x - mx) * cos - (q.y - my) * sin, y:(q.x - mx) * sin + (q.y - my) * cos}));
+  }
+  // One character in the middle and everyone they are connected to around them.
+  function radialLayout(count) {
+    return [{x:0, y:0}, ...Array.from({length:count}, (_, i) => { const a = 2 * Math.PI * i / count - Math.PI / 2; return {x:Math.cos(a), y:Math.sin(a)}; })];
+  }
+  function renderMap(root, ids, rels, centre = null) {
+    const small = !!centre, width = root.clientWidth || 700, nodeR = small ? 26 : 32;
+    const raw = small ? radialLayout(ids.length - 1) : graphLayout(ids, rels);
+    const xs = raw.map(q => q.x), ys = raw.map(q => q.y), margin = small ? 70 : 85;
+    const spanX = Math.max(...xs) - Math.min(...xs) || 1, spanY = Math.max(...ys) - Math.min(...ys) || 1;
+    // As tall as the layout needs at full width, within limits that grow with the cast.
+    const tallest = Math.max(460, Math.min(700, 220 + 130 * Math.sqrt(ids.length)));
+    const height = small ? (ids.length > 1 ? 320 : 150) : Math.round(Math.min(tallest, Math.max(240, spanY * (width - 2 * margin) / spanX + 2 * margin)));
+    root.style.height = height + 'px';
+    const scale = Math.min((width - 2 * margin) / spanX, (height - 2 * margin) / spanY);
+    // The ring around one character stretches sideways into the wide box, up to twice as wide as tall.
+    const scaleX = small ? Math.min((width - 2 * margin) / spanX, scale * 2) : scale;
+    const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
+    const points = raw.map(q => ({x:width / 2 + (q.x - cx) * scaleX, y:height / 2 + (q.y - cy) * scale}));
+    // Keep portraits from overlapping: push close pairs apart, inside the map.
+    const room = small ? 110 : 140;
+    for (let pass = 0; pass < 60; pass++) {
+      let moved = false;
+      for (let i = 0; i < points.length; i++) for (let j = i + 1; j < points.length; j++) {
+        const a = points[i], b = points[j], dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 0.01;
+        if (len >= room) continue;
+        const push = (room - len) / 2, ux = len > 0.01 ? dx / len : 1, uy = len > 0.01 ? dy / len : 0;
+        a.x -= ux * push; a.y -= uy * push; b.x += ux * push; b.y += uy * push; moved = true;
+      }
+      points.forEach(q => { q.x = Math.min(width - margin + 20, Math.max(margin - 20, q.x)); q.y = Math.min(height - margin + 20, Math.max(margin - 20, q.y)); });
+      if (!moved) break;
+    }
+    const pos = new Map(ids.map((id, i) => [id, points[i]]));
+    const order = new Map(ids.map((id, i) => [id, i])), groups = new Map();
+    rels.forEach(r => { const key = [r.from, r.to].sort((a, b) => order.get(a) - order.get(b)).join('|'); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(r); });
+    let lines = '', labels = '';
+    const arrow = `arrow-${root.id}`;
+    groups.forEach((list, key) => {
+      const [lo, hi] = key.split('|').map(id => pos.get(id)), len = Math.hypot(hi.x - lo.x, hi.y - lo.y) || 1;
+      const normal = {x:-(hi.y - lo.y) / len, y:(hi.x - lo.x) / len};
+      list.forEach((r, i) => {
+        const a = pos.get(r.from), b = pos.get(r.to), off = (i - (list.length - 1) / 2) * 42;
+        const mid = {x:(a.x + b.x) / 2 + normal.x * off, y:(a.y + b.y) / 2 + normal.y * off};
+        const control = {x:(a.x + b.x) / 2 + normal.x * off * 2, y:(a.y + b.y) / 2 + normal.y * off * 2};
+        const toward = (from, to, by) => { const l = Math.hypot(to.x - from.x, to.y - from.y) || 1; return {x:from.x + (to.x - from.x) / l * by, y:from.y + (to.y - from.y) / l * by}; };
+        const start = toward(a, control, nodeR + 4), end = toward(b, control, nodeR + (r.oneWay ? 6 : 4));
+        const d = `M${start.x.toFixed(1)} ${start.y.toFixed(1)} Q${control.x.toFixed(1)} ${control.y.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+        const selected = r.id === selectedRelation ? ' selected' : '';
+        lines += `<g class="rel${selected}" data-relation="${esc(r.id)}"><path class="rel-line${r.oneWay ? ' one-way' : ''}" d="${d}"${r.oneWay ? ` marker-end="url(#${arrow})"` : ''}/><path class="rel-hit" d="${d}"><title>${esc(relationTitle(r))}</title></path></g>`;
+        labels += `<button type="button" class="rel-label${selected}${r.label.trim() ? '' : ' empty'}" data-relation="${esc(r.id)}" data-rel-label="${esc(r.id)}" style="left:${mid.x.toFixed(1)}px;top:${mid.y.toFixed(1)}px" title="${esc(relationTitle(r))}">${esc(r.label.trim() || 'connected')}</button>`;
+      });
+    });
+    const nodes = ids.map(id => {
+      const e = elements().find(x => x.id === id), q = pos.get(id);
+      return `<button type="button" class="map-node${id === centre ? ' centre' : ''}" data-node="${esc(id)}" style="left:${q.x.toFixed(1)}px;top:${q.y.toFixed(1)}px" title="${id === centre ? '' : 'Open ' + esc(elementName(e))}">${avatarHTML(e)}<span class="map-node-name">${esc(elementName(e))}</span></button>`;
+    }).join('');
+    const empty = !rels.length ? `<p class="map-empty">${small ? 'No connections yet.' : 'No connections yet. Use + Connection to add one.'}</p>` : '';
+    root.innerHTML = `<svg aria-hidden="true"><defs><marker id="${arrow}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path class="rel-arrow" d="M0 0L10 5L0 10z"/></marker></defs>${lines}</svg>${labels}${nodes}${empty}`;
+    observeThumbs(root);
+  }
+  function relationTitle(r) {
+    const name = id => elementName(elements().find(e => e.id === id) || {name:''});
+    return `${name(r.from)} ${r.oneWay ? '→' : '↔'} ${name(r.to)}${r.label.trim() ? ': ' + r.label.trim() : ''}`;
+  }
+  function relationEditorHTML(r) {
+    const name = id => esc(elementName(elements().find(e => e.id === id) || {name:''}));
+    return `<div class="relation-editor" data-relation-editor="${esc(r.id)}">
+      <span class="rel-title">${name(r.from)} ${r.oneWay ? '→' : '↔'} ${name(r.to)}</span>
+      <div class="rel-row"><input type="text" data-rel-field="label" maxlength="100" value="${esc(r.label)}" placeholder="One word: sisters, rivals, admires…" aria-label="Word on the line">
+        <select data-rel-direction aria-label="Direction"><option value="both" ${r.oneWay ? '' : 'selected'}>Both ways</option><option value="forward" ${r.oneWay ? 'selected' : ''}>One-way: ${name(r.from)} → ${name(r.to)}</option><option value="back">One-way: ${name(r.to)} → ${name(r.from)}</option></select></div>
+      <textarea data-rel-field="note" rows="2" placeholder="Note (optional): what is between them…" aria-label="Note">${esc(r.note)}</textarea>
+      <div class="rel-actions"><button type="button" class="quiet danger" data-rel-delete>Delete connection</button><button type="button" class="quiet" data-rel-close>Close</button></div>
+    </div>`;
+  }
+  function connectionFormHTML(from) {
+    const list = elements(), options = selectedId => list.map(e => `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}>${esc(elementName(e))}</option>`).join('');
+    const first = from || list[0]?.id, second = list.find(e => e.id !== first)?.id;
+    return `<form class="connection-form" data-connection-form>
+      <div class="rel-row"><select name="from" aria-label="From">${options(first)}</select>
+        <select name="direction" aria-label="Direction"><option value="both">↔ both ways</option><option value="forward">→ one-way</option></select>
+        <select name="to" aria-label="To">${options(second)}</select></div>
+      <div class="rel-row"><input type="text" name="label" maxlength="100" placeholder="One word: sisters, rivals, admires…" aria-label="Word on the line">
+        <button type="submit" class="primary">Add connection</button><button type="button" class="quiet" data-form-cancel>Cancel</button></div>
+    </form>`;
+  }
+  function renderRelations() {
+    const onMap = view === 'map', e = view === 'element' ? element() : null;
+    if (!onMap && !e) return;
+    const section = onMap ? $('map-page') : $('element-links');
+    let ids, rels, centre = null;
+    if (onMap) { ids = elements().map(x => x.id); rels = relations(); }
+    else {
+      rels = relationsOf(e.id); centre = e.id;
+      const others = new Set(rels.map(r => r.from === e.id ? r.to : r.from));
+      ids = [e.id, ...elements().filter(x => others.has(x.id)).map(x => x.id)];
+      $('links-count').textContent = rels.length || '';
+    }
+    const selected = rels.find(r => r.id === selectedRelation);
+    section.querySelector('.connection-form-slot').innerHTML = connectionForm && elements().length > 1 ? connectionFormHTML(connectionForm.from) : '';
+    section.querySelector('.relation-editor-slot').innerHTML = selected ? relationEditorHTML(selected) : '';
+    section.querySelectorAll('[data-add-connection]').forEach(b => { b.disabled = elements().length < 2; b.title = elements().length < 2 ? 'Add a second character first' : 'Connect two characters'; });
+    renderMap(onMap ? $('map-canvas') : $('links-canvas'), ids, rels, centre);
+  }
+  function addRelation(from, to, label, oneWay) {
+    if (blocked) return;
+    if (!from || !to || from === to) { notify('Choose two different characters to connect.', true); return; }
+    if (relations().length >= MAX_RELATIONS) { notify(`A story can hold at most ${MAX_RELATIONS} connections.`, true); return; }
+    const r = {id:uid(), from, to, label:label.trim().slice(0, 100), note:''};
+    if (oneWay) r.oneWay = true;
+    connectionForm = null; selectedRelation = r.id;
+    mutate(() => { (project.relations ||= []).push(r); project.version = 2; });
+    document.querySelector(`[data-relation-editor="${CSS.escape(r.id)}"] [data-rel-field="note"]`)?.focus();
+  }
+  function setDirection(r, direction) {
+    mutate(() => {
+      if (direction === 'both') delete r.oneWay;
+      else { if (direction === 'back') [r.from, r.to] = [r.to, r.from]; r.oneWay = true; }
+    });
   }
   function addElement() {
     if (blocked) return;
@@ -729,10 +890,14 @@
     const c = chapter(), p = page(), onElement = isElement(p), focus = pendingFocus || captureFocus();
     pendingFocus = null;
     if (target && (target.chapter !== p.id || target.index > p.blocks.length)) target = null;
+    if (view === 'map' && !elements().length) view = 'chapter';
     $('title-page').hidden = view !== 'title'; $('chapter-editor').hidden = !editingView();
+    $('map-page').hidden = view !== 'map'; $('map-item').classList.toggle('active', view === 'map');
     $('chapter-head').hidden = onElement; $('element-head').hidden = !onElement; $('chapter-nav').hidden = onElement;
     if (onElement) { renderElementHead(p); renderLooks(p); }
-    $('element-looks').hidden = !onElement;
+    $('element-looks').hidden = !onElement; $('element-links').hidden = !onElement;
+    if (selectedRelation && !relations().some(r => r.id === selectedRelation)) selectedRelation = null;
+    renderRelations();
     $('blocks').setAttribute('aria-label', onElement ? 'Character page' : 'Chapter content');
     $('chapter-editor').setAttribute('aria-label', onElement ? 'Character' : 'Selected chapter');
     $('outline-page').hidden = view !== 'outline'; $('disclaimer-page').hidden = view !== 'disclaimer';
@@ -1818,6 +1983,44 @@
       openLightbox(list, list.findIndex(x => x.file === look.dataset.look), 'looks');
     });
     $('image-person').addEventListener('change', updateLibrary);
+    $('map-item').addEventListener('click', () => { selectedRelation = null; connectionForm = null; selectChapter(null, 'map'); });
+    [$('map-page'), $('element-links')].forEach(section => {
+      section.addEventListener('click', event => {
+        if (blocked) return;
+        if (event.target.closest('[data-add-connection]')) { connectionForm = {from:view === 'element' ? activeElement : null}; selectedRelation = null; renderRelations(); section.querySelector('[data-connection-form] [name=label]')?.focus(); return; }
+        if (event.target.closest('[data-form-cancel]')) { connectionForm = null; renderRelations(); return; }
+        if (event.target.closest('[data-rel-close]')) { selectedRelation = null; renderRelations(); return; }
+        const remove = event.target.closest('[data-rel-delete]');
+        if (remove) {
+          const id = remove.closest('[data-relation-editor]').dataset.relationEditor;
+          selectedRelation = null;
+          mutate(() => { project.relations = relations().filter(r => r.id !== id); });
+          notify('Connection deleted.', false, undoAction); return;
+        }
+        const rel = event.target.closest('.rel-label, .rel-hit');
+        if (rel) { const id = (rel.dataset.relation || rel.closest('[data-relation]').dataset.relation); selectedRelation = selectedRelation === id ? null : id; connectionForm = null; renderRelations(); return; }
+        const node = event.target.closest('[data-node]');
+        if (node && !node.classList.contains('centre')) { selectedRelation = null; selectElement(node.dataset.node); }
+      });
+      section.addEventListener('submit', event => {
+        const form = event.target.closest('[data-connection-form]'); if (!form) return;
+        event.preventDefault();
+        addRelation(form.elements.from.value, form.elements.to.value, form.elements.label.value, form.elements.direction.value === 'forward');
+      });
+      section.addEventListener('input', event => {
+        const field = event.target.dataset.relField, editor = event.target.closest('[data-relation-editor]');
+        const r = editor && relations().find(x => x.id === editor.dataset.relationEditor);
+        if (!field || !r || blocked) return;
+        history('relation:' + r.id + field);
+        r[field] = event.target.value; changed(false);
+        if (field === 'label') section.querySelectorAll(`[data-rel-label="${CSS.escape(r.id)}"]`).forEach(label => { label.textContent = r.label.trim() || 'connected'; label.classList.toggle('empty', !r.label.trim()); });
+      });
+      section.addEventListener('change', event => {
+        if (!event.target.matches('[data-rel-direction]')) return;
+        const r = relations().find(x => x.id === event.target.closest('[data-relation-editor]').dataset.relationEditor);
+        if (r) setDirection(r, event.target.value);
+      });
+    });
     $('element-list').addEventListener('click', event => {
       const select = event.target.closest('[data-element]'), move = event.target.closest('[data-element-move]');
       if (select) selectElement(select.dataset.element);
@@ -2210,7 +2413,7 @@
         $('image-search').focus(); $('image-search').select();
       }
     });
-    window.addEventListener('resize', () => { clearTimeout(window.__autosize); window.__autosize = setTimeout(autosizeAll, 150); });
+    window.addEventListener('resize', () => { clearTimeout(window.__autosize); window.__autosize = setTimeout(() => { autosizeAll(); if (project) renderRelations(); }, 150); });
 
     // Preview, export and project files
     $('preview-toggle').addEventListener('click', () => showPreview(!previewing));
