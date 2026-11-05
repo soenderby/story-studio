@@ -9,10 +9,11 @@
   const UI_KEY = BASE_KEY + ':ui', HIDE_KEY = BASE_KEY + ':hide-images';
   const SIZES = ['small', 'medium', 'large', 'wide'];
   const LAYOUTS = ['row', 'grid'], MAX_GROUP = 12;
-  const SERVER_VERSION = 9; // 7: text blocks can carry comments. 8: PDF export. 9: characters (project format 2). The editor runs under /s/<id>/ with relative API URLs.
+  const SERVER_VERSION = 10; // 7: text blocks can carry comments. 8: PDF export. 9: characters (project format 2). 10: pictures in subfolders (format 3). The editor runs under /s/<id>/ with relative API URLs.
   const COMMENT_LABELS = {note:'Note', change:'Change', question:'Question', keep:'Keep'}, MAX_COMMENTS = 500;
   // Format 2 adds story elements (characters) and relations; apps that only know format 1 refuse it instead of dropping them.
-  const FORMAT_VERSIONS = [1, 2], ELEMENT_KINDS = ['character'], MAX_ELEMENTS = 500, MAX_RELATIONS = 5000, MAX_ELEMENT_PICTURES = 2000;
+  // Format 3 adds pictures in subfolders of the story folder ("folder/file.png"); older apps refuse such paths.
+  const FORMAT_VERSIONS = [1, 2, 3], MAX_FOLDER_DEPTH = 8, ELEMENT_KINDS = ['character'], MAX_ELEMENTS = 500, MAX_RELATIONS = 5000, MAX_ELEMENT_PICTURES = 2000;
   const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i;
   const VIDEO_PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" fill="#2b302d"/><path d="M6 4.5v7l5.5-3.5z" fill="#fff"/></svg>');
   const SIZE_LABELS = {small:'S', medium:'M', large:'L', wide:'Wide'};
@@ -21,7 +22,7 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const uid = () => 'id-' + crypto.randomUUID();
   const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const fileURL = name => encodeURIComponent(name);
+  const fileURL = name => name.split('/').map(encodeURIComponent).join('/'); // Relative, so a folder path stays one
   const autosizeNative = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
   const writer = uid();
   const library = new Map(DATA.images.map(image => [image.file, image]));
@@ -47,6 +48,7 @@
     thumb:'m', sort:'newest', libraryWidth:400}, readUI());
   let activeComment = null, showResolved = false, commentsTimer = null;
   let selectedRelation = null, connectionForm = null; // the open connection editor; the "+ Connection" form ({from})
+  let libraryFolder = '', folderKey = '', folderNotice = false; // the library's open subfolder ('' = the story folder)
 
   function readUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {} }
@@ -139,7 +141,7 @@
         const added = result.images.filter(image => !before.has(image.file)).length;
         if (added && before.size) notify(`${added} new file${added === 1 ? '' : 's'} appeared in the library.`);
       }
-      $('folder-status').textContent = 'Watching this folder · new images and videos appear automatically';
+      $('folder-status').textContent = 'Watching this folder and its subfolders · new images and videos appear automatically';
       if (serverDirty && !serverPending) queueServerSave();
     } catch {
       $('folder-status').textContent = 'Folder connection lost — reconnecting automatically';
@@ -147,9 +149,27 @@
   }
 
   /* ---------- Project validation ---------- */
-  function validFile(name) {
-    return typeof name === 'string' && name.length <= 500 && !/[\\/\x00-\x1f]/.test(name) && (/\.(png|jpe?g|gif|webp|bmp)$/i.test(name) || VIDEO_PATTERN.test(name));
+  // Same rules as story.py: "file.png" at the top of the story folder, or "folder/sub/file.png" in its subfolders.
+  function validFolderName(name) {
+    return name.length > 0 && name.length <= 255 && !name.startsWith('.') && !/[ .]$/.test(name)
+      && !/[\x00-\x1f<>:"|?*\\/]/.test(name) && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i.test(name);
   }
+  function validFile(name) {
+    if (typeof name !== 'string' || !name.length || name.length > 500 || /[\\\x00-\x1f]/.test(name) || !(/\.(png|jpe?g|gif|webp|bmp)$/i.test(name) || VIDEO_PATTERN.test(name))) return false;
+    const folders = name.split('/'), file = folders.pop();
+    return !!file && folders.length <= MAX_FOLDER_DEPTH && folders.every(validFolderName);
+  }
+  function folderOf(file) { const i = file.lastIndexOf('/'); return i < 0 ? '' : file.slice(0, i); }
+  function baseName(path) { return path.slice(path.lastIndexOf('/') + 1); }
+  // Every media filename a project refers to, wherever it is used (mirrors media_references in story.py).
+  function mediaReferences(p) {
+    const files = [];
+    [...p.chapters, ...(p.elements || [])].forEach(page => page.blocks.forEach(b => files.push(...blockFiles(b))));
+    (p.elements || []).forEach(e => { if (e.portrait) files.push(e.portrait); e.pictures.forEach(x => files.push(x.file)); });
+    (p.extraImages || []).forEach(image => files.push(image.file));
+    return files;
+  }
+  const usesFolders = p => mediaReferences(p).some(file => file.includes('/'));
   function isVideo(file) { return VIDEO_PATTERN.test(file); }
   // Same rules as story.py: offsets that no longer fit the text are clamped, never rejected, so a comment is not lost.
   function validComments(list, body, text, id) {
@@ -202,12 +222,12 @@
           if (!Array.isArray(block.items) || block.items.length < 2 || block.items.length > MAX_GROUP) throw Error(`A picture group must contain 2–${MAX_GROUP} pictures.`);
           if (!LAYOUTS.includes(block.layout)) throw Error('Unknown picture group layout.');
           const items = block.items.map(item => {
-            if (!item || !validFile(item.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
+            if (!item || !validFile(item.file)) throw Error('Image references must be image filenames in the story folder, not URLs.');
             return {file: item.file};
           });
           picture = {id: blockId, type: 'gallery', layout: block.layout, items, caption: text(block.caption, 300000)};
         } else {
-          if (block.type !== 'image' || !validFile(block.file)) throw Error('Image references must be top-level image filenames, not paths or URLs.');
+          if (block.type !== 'image' || !validFile(block.file)) throw Error('Image references must be image filenames in the story folder, not URLs.');
           picture = {id: blockId, type: 'image', file: block.file, caption: text(block.caption, 300000)};
         }
         if (block.size !== undefined) {
@@ -234,7 +254,7 @@
         const item = {id: id(element.id), kind: element.kind, name: text(element.name ?? '', 10000)};
         if (element.aka !== undefined) item.aka = text(element.aka, 10000);
         if (element.portrait != null) {
-          if (!validFile(element.portrait)) throw Error('A portrait must be a top-level image filename, not a path or URL.');
+          if (!validFile(element.portrait)) throw Error('A portrait must be an image filename in the story folder, not a URL.');
           item.portrait = element.portrait;
         }
         const pictures = element.pictures ?? [];
@@ -242,7 +262,7 @@
         const seen = new Set();
         item.pictures = [];
         pictures.forEach(picture => {
-          if (!picture || !validFile(picture.file)) throw Error('Tagged pictures must be top-level image filenames, not paths or URLs.');
+          if (!picture || !validFile(picture.file)) throw Error('Tagged pictures must be image filenames in the story folder, not URLs.');
           if (picture.earlier !== undefined && typeof picture.earlier !== 'boolean') throw Error('Invalid earlier-look setting.');
           if (seen.has(picture.file)) return; // Tagging the same picture twice is harmless; keep the first.
           seen.add(picture.file);
@@ -268,14 +288,15 @@
         clean.relations.push(item);
       });
     }
-    if (clean.elements?.length || clean.relations?.length) clean.version = 2;
+    if (clean.elements?.length || clean.relations?.length) clean.version = Math.max(clean.version, 2);
     if (raw.extraImages !== undefined) {
       if (!Array.isArray(raw.extraImages) || raw.extraImages.length > 10000) throw Error('Invalid added-image library.');
       clean.extraImages = raw.extraImages.map(image => {
-        if (!image || !validFile(image.file)) throw Error('Added images must use top-level filenames.');
+        if (!image || !validFile(image.file)) throw Error('Added images must use filenames in the story folder.');
         return {file:image.file, title:text(image.title, 10000), category:text(image.category, 1000)};
       });
     }
+    if (usesFolders(clean)) clean.version = 3;
     if (raw.disclaimer !== undefined) clean.disclaimer = text(raw.disclaimer, 100000);
     if (raw.disclaimerGate !== undefined) {
       if (typeof raw.disclaimerGate !== 'boolean') throw Error('Invalid disclaimer setting.');
@@ -372,7 +393,17 @@
     });
     return diskQueue;
   }
+  // The first picture from a subfolder moves the story to format 3. Older apps would refuse the folder paths anyway;
+  // the version makes them say that Story Studio needs an update.
+  function formatForFolders() {
+    if (project.version >= 3 || !usesFolders(project)) return;
+    const old = project.version; project.version = 3;
+    if (folderNotice) return;
+    folderNotice = true; // Shown after the action's own notice (such as "Inserted 1 picture"), which would replace it.
+    setTimeout(() => notify(`This story now uses pictures from subfolders. Older versions of Story Studio can no longer open it; the previous file is kept as story-project.v${old}.backup.json.`));
+  }
   function changed(render = true) {
+    formatForFolders();
     project.updatedAt = new Date().toISOString();
     if (serverMode) serverDirty = true;
     saveBrowser(); clearTimeout(diskTimer);
@@ -755,7 +786,7 @@
     const r = {id:uid(), from, to, label:label.trim().slice(0, 100), note:''};
     if (oneWay) r.oneWay = true;
     connectionForm = null; selectedRelation = r.id;
-    mutate(() => { (project.relations ||= []).push(r); project.version = 2; });
+    mutate(() => { (project.relations ||= []).push(r); project.version = Math.max(project.version, 2); });
     document.querySelector(`[data-relation-editor="${CSS.escape(r.id)}"] [data-rel-field="note"]`)?.focus();
   }
   function setDirection(r, direction) {
@@ -768,7 +799,7 @@
     if (blocked) return;
     if (elements().length >= MAX_ELEMENTS) { notify(`A story can hold at most ${MAX_ELEMENTS} characters.`, true); return; }
     const first = project.version === 1, e = {id:uid(), kind:'character', name:'', pictures:[], blocks:[]};
-    mutate(() => { (project.elements ||= []).push(e); project.version = 2; activeElement = e.id; view = 'element'; target = null; caret = null; });
+    mutate(() => { (project.elements ||= []).push(e); project.version = Math.max(project.version, 2); activeElement = e.id; view = 'element'; target = null; caret = null; });
     window.scrollTo({top:0, behavior:'instant'});
     $('element-name').focus();
     // Older versions of Story Studio cannot open a story with characters; they would otherwise delete them when saving.
@@ -962,15 +993,47 @@
     $('scene-list').innerHTML = categories.map(c => `<option value="${esc(c)}">`).join('');
     $('library-total').textContent = library.size;
     $('image-library').innerHTML = [...library.values()].map(info => `
-      <article class="library-card" data-file="${esc(info.file)}" data-category="${esc(info.category)}">
+      <article class="library-card" data-file="${esc(info.file)}" data-folder="${esc(folderOf(info.file))}" data-category="${esc(info.category)}">
         <div class="library-thumb" draggable="true" data-drag-file="${esc(info.file)}" data-view-file tabindex="0" role="button" aria-label="View ${esc(info.title)}" title="${esc(info.title)}\nClick to enlarge · drag into the story">
           <img data-thumb="${esc(info.file)}" alt="">${isVideo(info.file) ? '<span class="video-badge" aria-label="Video">▶</span>' : ''}
           <label class="library-check" title="Select for a batch insert"><input type="checkbox" data-select-image aria-label="Select ${esc(info.title)}"></label><span class="used-badge" hidden></span>
           <button type="button" class="thumb-insert" data-add-image>+ Insert</button>
-        </div><p class="library-title">${esc(info.title)}</p>
+        </div><p class="library-title">${esc(info.title)}</p>${folderOf(info.file) ? `<p class="library-where" title="In ${esc(folderOf(info.file))}">${esc(folderOf(info.file))}</p>` : ''}
       </article>`).join('') + '<p id="library-empty" class="no-results" hidden>No images match. Clear the search or change the scene filter.</p>';
     libraryCards = [...$('image-library').querySelectorAll('.library-card')];
-    sortLibrary(); updateLibrary(); observeThumbs($('image-library'));
+    folderKey = ''; sortLibrary(); updateLibrary(); observeThumbs($('image-library'));
+  }
+  /* Subfolders: the library opens one folder at a time, like a file browser. Searching or filtering looks through
+     the open folder and everything below it. */
+  function libraryFolders() {
+    const folders = new Map(); // folder path -> number of files in it and below
+    library.forEach((_, file) => { for (let f = folderOf(file); f; f = folderOf(f)) folders.set(f, (folders.get(f) || 0) + 1); });
+    return folders;
+  }
+  function openFolder(folder) {
+    libraryFolder = folder; updateLibrary();
+    $('library-path').scrollIntoView({block:'nearest'});
+  }
+  const FOLDER_ICON = '<svg class="folder-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2h8.4A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>';
+  function renderFolders(folders, filtering) {
+    const crumbs = libraryFolder ? libraryFolder.split('/') : [];
+    const children = filtering ? [] : [...folders.keys()].filter(f => folderOf(f) === libraryFolder)
+      .sort((a, b) => a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}))
+      .map(f => [f, folders.get(f), libraryCards.find(c => c.dataset.file.startsWith(f + '/'))?.dataset.file || '']);
+    const key = JSON.stringify([folders.size > 0, libraryFolder, children]);
+    if (key === folderKey) return;
+    folderKey = key;
+    $('library-path').hidden = folders.size === 0;
+    $('library-path').innerHTML = [['', 'Story folder'], ...crumbs.map((name, i) => [crumbs.slice(0, i + 1).join('/'), name])]
+      .map(([path, name], i) => i === crumbs.length ? `<span aria-current="location">${esc(name)}</span>`
+        : `<button type="button" data-library-folder="${esc(path)}">${esc(name)}</button>`).join('<span class="sep" aria-hidden="true">›</span>');
+    $('library-folders').hidden = !children.length;
+    $('library-folders').innerHTML = children.map(([path, count, cover]) => `
+      <button type="button" class="library-folder" data-library-folder="${esc(path)}" title="Open ${esc(path)}">
+        <span class="folder-thumb">${cover ? `<img data-thumb="${esc(cover)}" alt="">` : ''}${FOLDER_ICON}</span>
+        <span class="folder-name">${esc(baseName(path))}</span><span class="folder-count">${count} file${count === 1 ? '' : 's'}</span>
+      </button>`).join('');
+    observeThumbs($('library-folders'));
   }
   function searchText(file) { const info = metadata(file); return (file + ' ' + info.title + ' ' + info.category).toLowerCase(); }
   function sortLibrary() {
@@ -987,21 +1050,28 @@
   function updateLibrary() {
     const counts = countsByFile(), terms = $('image-search').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
     const category = $('image-category').value, unused = $('unused-only').checked, person = $('image-person').value;
-    const tags = person ? tagsByFile() : null;
+    const tags = person ? tagsByFile() : null, folders = libraryFolders(), filtering = !!(terms.length || category || unused || person);
+    while (libraryFolder && !folders.has(libraryFolder)) libraryFolder = folderOf(libraryFolder); // Its files moved away.
+    const within = libraryFolder + '/';
+    const inView = filtering ? file => !libraryFolder || file.startsWith(within) : file => folderOf(file) === libraryFolder;
     const personOK = file => !person || (person === '*untagged' ? !tags.has(file) : !!tags.get(file)?.includes(person));
     const insertLabel = pick?.mode === 'replace' ? 'Use this' : pick?.mode === 'group-add' ? '+ Add to group' : '+ Insert';
     let visible = 0;
     libraryCards.forEach(card => {
       const file = card.dataset.file, n = counts.get(file) || 0, haystack = searchText(file);
-      card.hidden = !terms.every(t => haystack.includes(t)) || (!!category && card.dataset.category !== category) || (unused && n > 0) || !personOK(file);
+      card.hidden = !inView(file) || !terms.every(t => haystack.includes(t)) || (!!category && card.dataset.category !== category) || (unused && n > 0) || !personOK(file);
       if (!card.hidden) visible++;
       const badge = card.querySelector('.used-badge'); badge.hidden = n === 0; badge.textContent = n === 1 ? 'Used' : `Used ×${n}`;
       card.querySelector('input').checked = selected.has(file);
       card.classList.toggle('is-selected', selected.has(file));
       card.querySelector('[data-add-image]').textContent = insertLabel;
     });
-    $('library-count').textContent = visible === library.size ? `${library.size} files` : `${visible} of ${library.size} shown`;
-    $('library-empty').hidden = visible !== 0;
+    renderFolders(folders, filtering);
+    $('image-library').classList.toggle('searching', filtering);
+    const where = libraryFolder ? ` in ${baseName(libraryFolder)}` : '';
+    $('library-count').textContent = visible === library.size ? `${library.size} files`
+      : folders.size && !filtering ? `${visible} file${visible === 1 ? '' : 's'} here · ${library.size} in all` : `${visible} of ${library.size} shown${where}`;
+    $('library-empty').hidden = visible !== 0 || !$('library-folders').hidden;
     $('add-selected').textContent = pick?.mode === 'group-add' ? `Add ${selected.size} to the group` : `Insert ${selected.size} separately`;
     $('add-selected').hidden = selected.size === 0 || pick?.mode === 'replace';
     $('add-selected-group').hidden = selected.size < 2 || !!pick && pick.mode !== 'insert';
@@ -1030,7 +1100,7 @@
     $('focus-toggle').setAttribute('aria-pressed', String(!ui.chapters && !ui.library && !ui.comments));
     document.documentElement.style.setProperty('--lib-w', ui.libraryWidth + 'px');
     const base = {s:88, m:120, l:180}[ui.thumb] || 120;
-    $('image-library').style.setProperty('--thumb-base', base + 'px');
+    $('image-library').style.setProperty('--thumb-base', base + 'px'); $('library-folders').style.setProperty('--thumb-base', base + 'px');
     document.querySelectorAll('[data-thumb-size]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.thumbSize === ui.thumb)));
     $('image-sort').value = ui.sort;
   }
@@ -2139,6 +2209,9 @@
       if (event.target.closest('.library-check')) return;
       if (event.target.closest('[data-view-file]')) viewLibraryImage(card);
     });
+    const folderClick = event => { const button = event.target.closest('[data-library-folder]'); if (button) openFolder(button.dataset.libraryFolder); };
+    $('library-folders').addEventListener('click', folderClick);
+    $('library-path').addEventListener('click', folderClick);
     $('image-library').addEventListener('keydown', event => {
       if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-view-file]')) { event.preventDefault(); viewLibraryImage(event.target.closest('[data-file]')); }
     });
@@ -2564,7 +2637,7 @@
         fileStatus('Automatically saved · story-project.json', 'ok');
         if (serverDirty) queueServerSave();
       }
-      $('folder-status').textContent = 'Watching this folder · new images and videos appear automatically';
+      $('folder-status').textContent = 'Watching this folder and its subfolders · new images and videos appear automatically';
       setInterval(pollServer, 2000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) pollServer(); else if (serverDirty) queueServerSave(); });
       if (storyId) startUpdates();

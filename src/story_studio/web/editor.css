@@ -334,6 +334,23 @@ body.hide-images .avatar :is(img, video) { display: none; }
 .library-thumb:hover .thumb-insert, .library-thumb:focus-within .thumb-insert, .library-thumb:focus .thumb-insert { opacity: 1; }
 .library-title { font-size: .7rem; line-height: 1.35; margin: .3rem .1rem 0; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .no-results { grid-column: 1/-1; font-size: .8rem; color: var(--muted); }
+.library-where { font-size: .64rem; color: var(--muted); margin: .05rem .1rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.image-library:not(.searching) .library-where { display: none; }
+.library-path { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem; font-size: .78rem; margin-bottom: .3rem; }
+.library-path button { background: none; border: 0; padding: .15rem .3rem; color: var(--accent); }
+.library-path button:hover { text-decoration: underline; }
+.library-path [aria-current] { padding: .15rem .3rem; font-weight: 600; overflow-wrap: anywhere; }
+.library-path .sep { color: var(--muted); }
+.library-folders { margin-bottom: .7rem; padding-bottom: .7rem; border-bottom: 1px solid var(--line); }
+.library-folder { display: block; min-width: 0; width: 100%; padding: 0; border: 0; background: none; text-align: left; }
+.folder-thumb { position: relative; display: block; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: var(--soft); border: 1px solid var(--line-strong); }
+.folder-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: .5; }
+.library-folder:hover .folder-thumb, .library-folder:focus-visible .folder-thumb { border-color: var(--accent); }
+.library-folder:hover .folder-thumb img { opacity: .7; }
+.folder-icon { position: absolute; inset: 0; margin: auto; width: 44%; height: 44%; color: var(--accent); filter: drop-shadow(0 1px 3px #0007); }
+.folder-name { display: block; font-size: .74rem; font-weight: 600; line-height: 1.3; margin: .3rem .1rem 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.folder-count { display: block; font-size: .66rem; color: var(--muted); margin: 0 .1rem; }
+body.hide-images .folder-thumb img { display: none; }
 .folder-status { margin-top: 1rem; }
 
 /* Enlarged library (picker) */

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### New
+
+- **Pictures in subfolders.** The library now also finds images and videos in folders inside the story folder, and shows them as folders you can open, with a path to go back up. Searching and filtering look through the open folder and every folder inside it, and show where each match is.
+
+### Compatibility
+
+- **Project format 3** for stories that use a picture from a subfolder. The first time that happens, the previous file is kept as `story-project.v1.backup.json` (or `v2` for a story with characters). Older versions of Story Studio refuse to open such a story. Stories that only use pictures at the top of the folder are unchanged.
+
 ## 0.5.0 (2026-11-03)
 
 ### New

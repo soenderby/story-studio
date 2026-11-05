@@ -20,7 +20,7 @@ from .story import MAX_BODY, PROJECT_NAME, Studio, byte_range, encode, media_typ
 from .updates import Conflict, Updater
 from .version import __version__
 
-SERVER_VERSION = 9  # Bump when the project format or API changes, so stale instances are detected.
+SERVER_VERSION = 10  # Bump when the project format or API changes, so stale instances are detected.
 log = logging.getLogger('story_studio')
 # Only these types are served from web/. None of them is a media type, so a story's media is never shadowed.
 WEB_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',

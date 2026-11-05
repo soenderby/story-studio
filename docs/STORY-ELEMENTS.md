@@ -69,7 +69,7 @@ New optional top-level fields:
     "kind": "character",       // later: "place", "object", …
     "name": "…",               // may be empty while drafting
     "aka": "…",                // optional, free text
-    "portrait": "file.png",    // optional; a top-level media filename
+    "portrait": "file.png",    // optional; a media filename (may be in a subfolder, format 3)
     "pictures": [              // tagged pictures, in the order they were tagged; at most 2000
       {"file": "a.png", "earlier": true}   // "earlier" optional: an earlier look
     "blocks": [ … ]            // same block types and rules as a chapter's blocks, comments included

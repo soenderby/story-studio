@@ -61,7 +61,7 @@
     const placeholder = `<span class="cover-placeholder" aria-hidden="true">${esc((story.title || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
     if (!story.cover || story.missing) return placeholder;
     if (hide) return '<span class="cover-placeholder cover-hidden">Image hidden</span>';
-    const src = esc(storyURL(story.id) + encodeURIComponent(story.cover));
+    const src = esc(storyURL(story.id) + story.cover.split('/').map(encodeURIComponent).join('/'));
     return (/\.(mp4|m4v|mov|webm|ogv)$/i.test(story.cover)
       ? `<video src="${src}#t=1" muted playsinline preload="metadata" tabindex="-1"></video>`
       : `<img src="${src}" alt="" loading="lazy" decoding="async">`) + placeholder;

@@ -183,7 +183,9 @@
         <label><input type="checkbox" id="unused-only"> Unused only</label>
         <span class="thumb-size" role="group" aria-label="Thumbnail size"><button type="button" data-thumb-size="s" title="Small thumbnails">S</button><button type="button" data-thumb-size="m" title="Medium thumbnails">M</button><button type="button" data-thumb-size="l" title="Large thumbnails">L</button></span>
       </div>
+      <nav id="library-path" class="library-path" aria-label="Folder" hidden></nav>
       <div class="library-toolbar"><span id="library-count" role="status"></span><span><button id="clear-selected" type="button" class="link" hidden>Clear</button> <button id="add-selected" type="button" class="primary" hidden>Insert selected (0)</button> <button id="add-selected-group" type="button" class="primary" hidden title="Insert the ticked pictures as one group, in a row or grid, with a single caption">Insert as one group</button></span></div>
+      <div id="library-folders" class="image-library library-folders" hidden></div>
       <div id="image-library" class="image-library"></div>
       <p id="folder-status" class="hint folder-status" role="status">Connecting to the image folder…</p>
     </aside>

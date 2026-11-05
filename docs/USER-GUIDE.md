@@ -2,12 +2,16 @@
 
 ## Automatic images and videos
 
-Copy or generate new PNG, JPG/JPEG, WebP, GIF or BMP images, or MP4, M4V, MOV, WebM or OGV videos, directly into the story folder. They appear in the library within a few seconds, without selecting files or refreshing the page.
+Copy or generate new PNG, JPG/JPEG, WebP, GIF or BMP images, or MP4, M4V, MOV, WebM or OGV videos, into the story folder or any folder inside it. They appear in the library within a few seconds, without selecting files or refreshing the page.
 
-- Only files directly in the story folder are listed. Subdirectories, symbolic links and ZIP archives are not scanned or opened.
+- **Subfolders** show in the library as folders, like in File Explorer. Click a folder to open it; the path above the pictures (**Story folder › Batch one › Day 2**) takes you back up. Each folder shows how many files it holds, counting its own subfolders.
+- **Searching and filtering** (scene, character, Unused only) look through the open folder *and all folders inside it*, and each match shows which folder it is in. Search for a folder's name to find everything in it.
+- Not scanned: hidden folders (such as `.cache`), folders that hold a story of their own (`story-project.json`), shortcuts, symbolic links, junctions and ZIP archives. Folders more than 8 levels deep are skipped, and a story folder lists at most 20 000 files in 2 000 subfolders.
+- Moving or renaming a file or folder counts as removing the picture and adding a new one: placed copies in the story show as unavailable until the file is back at its old path.
 - Previously described images retain their descriptions and scene categories. New images use their filenames until described elsewhere.
 - Removed images disappear from the available library. If they are already placed in a chapter, their placements and captions are retained so you do not lose your work; they show as unavailable until the files return.
-- Pictures are referenced by their original filenames, not uploaded or embedded.
+- Pictures are referenced by their original filenames (with the folder, such as `Batch one/forest.png`), not uploaded or embedded.
+- The first picture you use from a subfolder changes the story to a newer project format, so older versions of Story Studio cannot open it any more (they could not show those pictures). The file from before is kept as `story-project.v1.backup.json` (or `v2` for a story with characters). Update Story Studio on every computer that edits the same story. Stories that only use pictures at the top of the folder are unchanged.
 - Discovery runs while the local server and editor page are running. Reopening the editor also loads the current folder contents.
 
 ### Videos
@@ -126,7 +130,7 @@ Projects reference images by filename; they do not embed the image files. Keep t
 
 ## Privacy and scope
 
-The server listens only on **127.0.0.1**, not on your LAN or the internet. It serves only the editor assets and the top-level images and videos of your story folder. Project writes are restricted to the designated autosave/backup files, use a per-server request token and reject cross-site writes. There is no general filesystem API or directory listing.
+The server listens only on **127.0.0.1**, not on your LAN or the internet. It serves only the editor assets and the images and videos of your story folder and its subfolders, never through a link or junction to somewhere else. Project writes are restricted to the designated autosave/backup files, use a per-server request token and reject cross-site writes. There is no general filesystem API or directory listing.
 
 **Settings → Hide all images and videos** (the **⋯** menu in a story, or **Settings** on the story list) hides every picture and video in Story Studio: story covers, the image library, chapter thumbnails, the story itself, the viewer and Read mode. Each one is replaced by a small placeholder with its description, so you can still write and arrange the story, and videos stop playing. The setting is kept in the browser and applies to all stories. Exported HTML always includes the pictures.
 

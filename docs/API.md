@@ -5,9 +5,10 @@ This is the contract that phases 1–5 build against (see [PLAN.md](PLAN.md)). C
 ## Versions
 
 - **App version**: semver string in `src/story_studio/version.py` (`__version__`). It is what releases and the updater compare.
-- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks; **8** adds PDF export; **9** adds characters (project format 2).
-- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version"` 1 or 2. Optional fields added to format 1, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below).
+- **API version**: integer `SERVER_VERSION` in `server.py` and `editor.js`. Bump it when an endpoint or the project format changes incompatibly, so a stale running instance is detected. Phase 1 set it to **6**; **7** adds comments to text blocks; **8** adds PDF export; **9** adds characters (project format 2); **10** adds media in subfolders (project format 3).
+- **Project format**: `story-project.json`, `"format": "illustrated-story-project"`, `"version"` 1, 2 or 3. Optional fields added to format 1, which older apps ignore (and drop when they save): `comments` on text blocks (API 7, see below).
 - **Format 2** (API 9) = format 1 plus `elements` and `relations` (see [Characters](#characters-api-9)). A project with at least one element or relation is format 2; one without stays format 1 and opens in older apps. When a save first turns a story's file into format 2, the server copies the format-1 file to `story-project.v1.backup.json` (only if that file does not exist yet). A save never lowers the version on disk: a format-1 body saved over a format-2 file is written as format 2. Apps before API 9 refuse any version but 1, so they cannot open (and strip) a format-2 story. A version above the newest known is refused with "saved by a newer version of Story Studio". A future format bump follows the same pattern: migrate forward, write `story-project.v<old>.backup.json` first.
+- **Format 3** (API 10) = format 2 plus media filenames in subfolders (see [Media filenames](#media-filenames-api-10)). A project with at least one reference containing `/` (in blocks, portraits, tagged pictures or `extraImages`) is format 3; the first save that makes it so copies the previous file to `story-project.v1.backup.json` or `story-project.v2.backup.json`. Apps before API 10 refuse format 3 ("saved by a newer version"); they would refuse the paths anyway.
 
 ## Files and folders
 
@@ -84,7 +85,7 @@ def main() -> None                # CLI: python -m story_studio [--port N] [--no
 | `POST /api/stories/<id>/reveal` | | Opens the folder in Explorer. `{"ok": true}`, `404` if the folder is missing |
 | `POST /api/quit` | none (`Content-Length: 0`, no `Origin`) | Flushes nothing (saves are synchronous), exits after the response. Used by the updater, the installer and by a newer launching instance. |
 
-`Story` = `{"id", "title", "path", "lastOpened", "missing": bool, "cover": "<media filename>" | null, "chapters": int, "media": int}`. `title` is read from the project when available (cached in `stories.json` for missing folders). `cover` is the first image or video used in the project that exists in the folder, served from `/s/<id>/<cover>`. `media` is the number of top-level image and video files in the folder. `lastOpened` is an ISO 8601 timestamp, or `null` if never opened. `missing` is true when the folder or its `story-project.json` is gone. When the folder exists but its project cannot be read, the Story also has `"error": "<message>"` (and `missing: false`).
+`Story` = `{"id", "title", "path", "lastOpened", "missing": bool, "cover": "<media filename>" | null, "chapters": int, "media": int}`. `title` is read from the project when available (cached in `stories.json` for missing folders). `cover` is the first image or video used in the project that exists in the folder, served from `/s/<id>/<cover>`. `media` is the number of image and video files the folder lists (see [Media filenames](#media-filenames-api-10)). `lastOpened` is an ISO 8601 timestamp, or `null` if never opened. `missing` is true when the folder or its `story-project.json` is gone. When the folder exists but its project cannot be read, the Story also has `"error": "<message>"` (and `missing: false`).
 
 ### Per story: `/s/<id>/...`
 
@@ -93,7 +94,7 @@ def main() -> None                # CLI: python -m story_studio [--port N] [--no
 | `GET /s/<id>` | `301` to `/s/<id>/`, so relative URLs resolve. |
 | `GET /s/<id>/` | `editor.html`, for any well-formed id (`s` + 16 hex); the editor learns about an unknown or missing story from `api/bootstrap`. Also sets `lastOpened`. |
 | `GET /s/<id>/<asset>` | Same web assets as above, so the editor's relative links work. |
-| `GET /s/<id>/<media>` | Top-level media of that story folder only, same rules and Range support as today. |
+| `GET /s/<id>/<media>` | Media of that story folder: `<media>` is a media filename (below), each segment percent-encoded (an encoded `/` works too). Range support. 404 for anything the image list would not show. |
 | `GET /s/<id>/api/bootstrap` | As today, plus `"storyId"` and `"appVersion"`. Also sets `lastOpened`. `500 {"error"}` if the project cannot be read (it is left untouched). |
 | `GET /s/<id>/api/images` | As today. |
 | `POST /s/<id>/api/project` | As today (revision check, `.bak`, atomic write). |
@@ -133,6 +134,12 @@ A text block may have `"comments": [Comment]` (at most 500; omitted when empty).
 
 Comments are never written to exported HTML.
 
+## Media filenames (API 10)
+
+A media filename is relative to the story folder, with `/` between folders: `file.png` or `Batch one/Day 2/file.png`. The extension must be an image or video type. Folder segments: 1–255 characters, not starting with `.`, not ending with `.` or space, none of `<>:"|?*\` or control characters, not a Windows device name (`CON`, `NUL`, `COM1`…), at most 8 folders. The whole name is at most 500 characters. The last segment keeps format 1's rules (no `/`, `\` or control characters).
+
+`/api/images` (and bootstrap's `images`) lists the folder breadth-first: top-level files and every subfolder that is a real folder (not a symbolic link or junction), not hidden or a system folder, and holds no `story-project.json` of its own. At most 8 levels deep, 2000 subfolders and 20 000 files. A new file's default `title` is its name without folder or extension. Serving a file applies the same folder rules to each segment of its path, and checks that the resolved file is still inside the story folder.
+
 ## Characters (API 9)
 
 Top-level `elements` (at most 500) and `relations` (at most 5000), both optional. See [STORY-ELEMENTS.md](STORY-ELEMENTS.md) for the design.
@@ -140,8 +147,8 @@ Top-level `elements` (at most 500) and `relations` (at most 5000), both optional
 `Element` = `{"id", "kind": "character", "name", "aka"?, "portrait"?, "pictures": [{"file", "earlier"?: true}], "blocks": [Block]}`
 
 - `id` shares the project's id namespace (chapters, blocks, comments). `kind` is only `"character"`; a new kind that brings new fields needs a new format version.
-- `name` (may be empty) and `aka` ≤ 10 000 characters. `portrait`: a top-level media filename, or absent.
-- `pictures`: the pictures tagged with this character, at most 2000, top-level media filenames. A repeated file keeps its first entry. `earlier: true` marks an earlier look; `false` is dropped.
+- `name` (may be empty) and `aka` ≤ 10 000 characters. `portrait`: a media filename, or absent.
+- `pictures`: the pictures tagged with this character, at most 2000, media filenames. A repeated file keeps its first entry. `earlier: true` marks an earlier look; `false` is dropped.
 - `blocks`: the character's free page, with exactly the rules of a chapter's blocks (comments included). They count toward the project's 10 000-block limit.
 
 `Relation` = `{"id", "from", "to", "label", "note", "oneWay"?: true}`

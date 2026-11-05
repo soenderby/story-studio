@@ -55,22 +55,53 @@ class OneStoryTest(ServerTest):
         self.assertEqual(json.loads((self.root / (story.PROJECT_NAME + '.bak')).read_text()), previous)
         self.assertFalse(list(self.root.glob('.story-save-*.tmp')))
 
-    def test_discovers_additions_and_removals_without_scanning_subdirectories(self):
+    def test_discovers_additions_and_removals_including_subfolders(self):
         images = self.prefix + '/api/images'
         self.assertEqual(self.get(images)['images'], [])
         (self.root / 'a new image.PNG').write_bytes(b'image')
-        nested = self.root / 'private'
-        nested.mkdir()
-        (nested / 'secret.png').write_bytes(b'not scanned')
+        nested = self.root / 'Batch one' / 'Day 2'
+        nested.mkdir(parents=True)
+        (nested / 'deep.png').write_bytes(b'deep')
+        (self.root / 'Batch one' / 'notes.txt').write_bytes(b'not media')
         (self.root / 'archive.zip').write_bytes(b'not opened')
+        hidden = self.root / '.cache'
+        hidden.mkdir()
+        (hidden / 'hidden.png').write_bytes(b'hidden folders are skipped')
+        other = self.root / 'Another story'
+        other.mkdir()
+        (other / story.PROJECT_NAME).write_text('{}')
+        (other / 'theirs.png').write_bytes(b'a story inside this one keeps its own pictures')
+        outside = self.folder('Outside')
+        (outside / 'secret.png').write_bytes(b'never reachable')
         try:
-            (self.root / 'linked.png').symlink_to(nested / 'secret.png')
+            (self.root / 'linked.png').symlink_to(outside / 'secret.png')
+            (self.root / 'linked folder').symlink_to(outside, target_is_directory=True)
         except OSError:
             pass
-        self.assertEqual([image['file'] for image in self.get(images)['images']], ['a new image.PNG'])
-        self.assertEqual(self.open(self.prefix + '/linked.png')[0], 404)
+        listed = [image['file'] for image in self.get(images)['images']]
+        self.assertEqual(listed, ['Batch one/Day 2/deep.png', 'a new image.PNG'])
+        deep = next(image for image in self.get(images)['images'] if image['file'].endswith('deep.png'))
+        self.assertEqual((deep['title'], deep['category']), ('deep', 'New additions'))
+        status, _, body = self.open(self.prefix + '/Batch%20one/Day%202/deep.png')
+        self.assertEqual((status, body), (200, b'deep'))
+        self.assertEqual(self.open(self.prefix + '/Batch%20one%2FDay%202%2Fdeep.png')[0], 200)  # One encoded segment
+        for path in ['/linked.png', '/linked%20folder/secret.png', '/.cache/hidden.png', '/Another%20story/theirs.png',
+                     '/Batch%20one/../a%20new%20image.PNG', '/Batch%20one/./Day%202/deep.png', '/Batch%20one//Day%202/deep.png',
+                     '/Batch%20one%5CDay%202%5Cdeep.png', '/Batch%20one/notes.txt']:
+            self.assertEqual(self.open(self.prefix + path)[0], 404, path)
         (self.root / 'a new image.PNG').unlink()
+        (nested / 'deep.png').unlink()
         self.assertEqual(self.get(images)['images'], [])
+
+    def test_subfolder_pictures_are_saved_as_paths(self):
+        (self.root / 'Batch').mkdir()
+        (self.root / 'Batch' / 'one.png').write_bytes(b'one')
+        project = self.initial['project']
+        project['chapters'][0]['blocks'].append({'id': 'in-folder', 'type': 'image', 'file': 'Batch/one.png', 'caption': ''})
+        self.post_project(project)
+        saved = story.Studio(self.root).read_project()[0]
+        self.assertEqual((saved['version'], saved['chapters'][0]['blocks'][-1]['file']), (3, 'Batch/one.png'))
+        self.assertEqual(self.get('/api/stories')['stories'][0]['cover'], 'Batch/one.png')
 
     def test_videos_are_discovered_saved_and_streamed_in_ranges(self):
         (self.root / 'clip.MP4').write_bytes(b'0123456789')
@@ -201,7 +232,7 @@ class OneStoryTest(ServerTest):
 
 class StoryListTest(ServerTest):
     def test_info_and_empty_list(self):
-        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 9, 'appVersion': __version__})
+        self.assertEqual(self.get('/api/info'), {'app': 'story-studio', 'version': 10, 'appVersion': __version__})
         listed = self.get('/api/stories')
         self.assertEqual((listed['stories'], listed['token']), ([], self.server.token))
         status, _, body = self.open('/')

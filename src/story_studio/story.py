@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import tempfile
 import threading
 
@@ -28,20 +29,68 @@ MAX_ELEMENTS = 500
 MAX_RELATIONS = 5000
 MAX_ELEMENT_PICTURES = 2000
 # Format 2 = format 1 + story elements (characters) and relations. Apps that only know format 1 refuse to open it,
-# rather than dropping the characters when they save.
-FORMAT_VERSIONS = (1, 2)
+# rather than dropping the characters when they save. Format 3 = format 2 + pictures in subfolders ("folder/file.png").
+FORMAT_VERSIONS = (1, 2, 3)
 PROJECT_NAME = 'story-project.json'
 V1_BACKUP_NAME = 'story-project.v1.backup.json'
+# Subfolder discovery limits, so a story folder that holds a whole photo archive stays quick to scan.
+MAX_FOLDER_DEPTH = 8
+MAX_SCANNED_FOLDERS = 2000
+MAX_LISTED_MEDIA = 20000
+HIDDEN_ATTRIBUTES = 0x2 | 0x4  # FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM (Windows only)
+LINK_TAGS = {0xA000000C, 0xA0000003}  # IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT (junctions)
 PRE_MIGRATION_NAME = 'story-project.pre-migration.json'
 DEFAULT_CATEGORIES = {'', 'New additions', 'Videos', 'Added images'}
 BLANK_PROJECT = {'format': 'illustrated-story-project', 'version': 1, 'id': 'new-story', 'title': 'Untitled story',
                  'subtitle': '', 'chapters': [{'id': 'chapter-1', 'title': 'Chapter one', 'notes': '', 'blocks': []}]}
 
 
+def version_backup_name(version):
+    return f'story-project.v{version}.backup.json'
+
+
+def safe_folder_name(name):
+    """One folder of a media path. Hidden folders and names Windows cannot hold (or treats as devices) are refused."""
+    return (0 < len(name) <= 255 and not name.startswith('.') and not name.endswith((' ', '.'))
+            and not re.search(r'[\x00-\x1f<>:"|?*\\/]', name)
+            and not re.fullmatch(r'(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?', name, re.IGNORECASE))
+
+
 def safe_media(name):
-    return (isinstance(name, str) and 0 < len(name) <= 500
-            and not re.search(r'[\\/\x00-\x1f]', name)
-            and Path(name).suffix.lower() in MEDIA_EXTENSIONS)
+    """A media file of the story folder: "file.png" at the top, or "folder/sub/file.png" in subfolders.
+    Always relative, '/'-separated, without '.' or '..' and never a URL."""
+    if not (isinstance(name, str) and 0 < len(name) <= 500 and not re.search(r'[\\\x00-\x1f]', name)
+            and Path(name).suffix.lower() in MEDIA_EXTENSIONS):
+        return False
+    *folders, file = name.split('/')
+    return bool(file) and len(folders) <= MAX_FOLDER_DEPTH and all(map(safe_folder_name, folders))
+
+
+def media_folder(path):
+    """A subfolder whose media belongs to the story: a real folder (not a link or junction), not hidden or
+    a system folder, and not a story folder of its own."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISDIR(info.st_mode) and getattr(info, 'st_reparse_tag', 0) not in LINK_TAGS
+            and not getattr(info, 'st_file_attributes', 0) & HIDDEN_ATTRIBUTES
+            and not os.path.lexists(os.path.join(path, PROJECT_NAME)))
+
+
+def media_references(project):
+    """Every media filename the project refers to, wherever it is used."""
+    for page in project['chapters'] + project.get('elements', []):
+        for block in page['blocks']:
+            if block['type'] == 'image':
+                yield block['file']
+            elif block['type'] == 'gallery':
+                yield from (item['file'] for item in block['items'])
+    for element in project.get('elements', []):
+        if 'portrait' in element:
+            yield element['portrait']
+        yield from (picture['file'] for picture in element['pictures'])
+    yield from (image['file'] for image in project.get('extraImages', []))
 
 
 def directory_key(root):
@@ -139,11 +188,11 @@ def validate_project(value):
                     raise ValueError('Unknown picture group layout.')
                 for picture in pictures:
                     if not isinstance(picture, dict) or not safe_media(picture.get('file')):
-                        raise ValueError('Image references must be top-level image filenames, not paths or URLs.')
+                        raise ValueError('Image references must be image filenames in the story folder, not URLs.')
                 item.update(layout=block['layout'], items=[{'file': picture['file']} for picture in pictures],
                             caption=text(block.get('caption'), 300000))
             else:
-                raise ValueError('Image references must be top-level image filenames, not paths or URLs.')
+                raise ValueError('Image references must be image filenames in the story folder, not URLs.')
             if item['type'] != 'text' and 'size' in block:
                 if not isinstance(block['size'], str) or block['size'] not in IMAGE_SIZES:
                     raise ValueError('Unknown image size.')
@@ -170,8 +219,6 @@ def validate_project(value):
     if 'relations' in value:
         clean['relations'] = clean_relations(value['relations'], {e['id'] for e in clean.get('elements', [])},
                                              text, unique_id)
-    if clean.get('elements') or clean.get('relations'):
-        clean['version'] = 2
     if 'extraImages' in value:
         if not isinstance(value['extraImages'], list) or len(value['extraImages']) > 10000:
             raise ValueError('Invalid additional image library.')
@@ -181,6 +228,10 @@ def validate_project(value):
                 raise ValueError('Invalid additional image reference.')
             clean['extraImages'].append({'file': image['file'], 'title': text(image.get('title'), 10000),
                                          'category': text(image.get('category'), 1000)})
+    if clean.get('elements') or clean.get('relations'):
+        clean['version'] = max(clean['version'], 2)
+    if any('/' in file for file in media_references(clean)):
+        clean['version'] = 3  # Older apps refuse folder paths; the version makes them say why.
     if 'disclaimer' in value:
         clean['disclaimer'] = text(value['disclaimer'], 100000)
     if 'disclaimerGate' in value:
@@ -207,7 +258,7 @@ def clean_elements(value, text, unique_id, blocks):
             item['aka'] = text(element['aka'], 10000)
         if element.get('portrait') is not None:
             if not safe_media(element['portrait']):
-                raise ValueError('A portrait must be a top-level image filename, not a path or URL.')
+                raise ValueError('A portrait must be an image filename in the story folder, not a URL.')
             item['portrait'] = element['portrait']
         pictures = element.get('pictures', [])
         if not isinstance(pictures, list) or len(pictures) > MAX_ELEMENT_PICTURES:
@@ -215,7 +266,7 @@ def clean_elements(value, text, unique_id, blocks):
         item['pictures'], seen = [], set()
         for picture in pictures:
             if not isinstance(picture, dict) or not safe_media(picture.get('file')):
-                raise ValueError('Tagged pictures must be top-level image filenames, not paths or URLs.')
+                raise ValueError('Tagged pictures must be image filenames in the story folder, not URLs.')
             if 'earlier' in picture and not isinstance(picture['earlier'], bool):
                 raise ValueError('Invalid earlier-look setting.')
             if picture['file'] in seen:
@@ -400,32 +451,61 @@ class Studio:
         return project, hashlib.sha256(payload).hexdigest()
 
     def images(self):
-        # scandir never enters directories and explicitly excludes symbolic links.
-        images = []
-        with os.scandir(self.root) as entries:
+        """The folder's media, including subfolders (as "folder/file.png"). Links, junctions, hidden folders and
+        story folders inside this one are skipped. Breadth-first in name order, so the limits always cut the same files."""
+        images, queue, scanned = [], [(self.root, '')], 0
+        while queue and len(images) < MAX_LISTED_MEDIA:
+            folder, prefix = queue.pop(0)
+            try:
+                with os.scandir(folder) as found:
+                    entries = sorted(found, key=lambda entry: entry.name)
+            except OSError:
+                if not prefix:
+                    raise
+                continue  # A subfolder that vanished or cannot be read is left out.
             for entry in entries:
-                if not entry.is_file(follow_symlinks=False) or not safe_media(entry.name):
+                name = prefix + entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    if (prefix.count('/') < MAX_FOLDER_DEPTH and scanned < MAX_SCANNED_FOLDERS
+                            and safe_folder_name(entry.name) and media_folder(entry.path)):
+                        scanned += 1
+                        queue.append((entry.path, name + '/'))
+                    continue
+                if not entry.is_file(follow_symlinks=False) or not safe_media(name):
                     continue
                 try:
-                    stat = entry.stat(follow_symlinks=False)
+                    info = entry.stat(follow_symlinks=False)
                 except FileNotFoundError:
                     continue  # A copy/rename may have finished during this scan.
-                known = self.known_images.get(entry.name)
+                known = self.known_images.get(name)
                 video = Path(entry.name).suffix.lower() in VIDEO_TYPES
-                image = dict(known) if known else {'file': entry.name, 'title': Path(entry.name).stem,
+                image = dict(known) if known else {'file': name, 'title': Path(entry.name).stem,
                                                   'category': 'Videos' if video else 'New additions'}
-                image['stamp'] = f'{stat.st_mtime_ns}-{stat.st_size}'
+                image['stamp'] = f'{info.st_mtime_ns}-{info.st_size}'
                 images.append(image)
+                if len(images) >= MAX_LISTED_MEDIA:
+                    break
         images.sort(key=lambda image: image['file'])
         signature = hashlib.sha256(json.dumps(images, sort_keys=True).encode()).hexdigest()
         return images, signature
 
     def media_file(self, name):
-        """A top-level media file of this folder, never a symbolic link or anything in a subfolder."""
+        """A media file of this folder or of a subfolder that images() lists. Never through a symbolic link,
+        junction, hidden folder or a story folder inside this one."""
         if not safe_media(name):
             return None
+        *folders, _ = name.split('/')
+        folder = self.root
+        for part in folders:
+            folder = folder / part
+            if not media_folder(folder):
+                return None
         file = self.root / name
-        return file if not file.is_symlink() and file.is_file() else None
+        if file.is_symlink() or not file.is_file():
+            return None
+        if folders and os.path.normcase(os.path.realpath(file)) != os.path.normcase(str(file)):
+            return None  # Something on the way is not what it seemed; never leave the story folder.
+        return file
 
     def summary(self):
         with self.lock:
@@ -449,9 +529,10 @@ class Studio:
                 project['version'] = on_disk['version']
                 payload = encode(project)
             if hashlib.sha256(payload).hexdigest() != current:
-                if on_disk['version'] == 1 and project['version'] > 1 and not (self.root / V1_BACKUP_NAME).exists():
-                    # The last format-1 project, kept once, before older apps stop opening this story.
-                    atomic_write(self.root / V1_BACKUP_NAME, self.project_path.read_bytes())
+                backup = self.root / version_backup_name(on_disk['version'])
+                if project['version'] > on_disk['version'] and not backup.exists():
+                    # The last project in the older format, kept once, before older apps stop opening this story.
+                    atomic_write(backup, self.project_path.read_bytes())
                 # Back up the previous validated version before replacing it.
                 atomic_write(self.backup_path, self.project_path.read_bytes())
                 atomic_write(self.project_path, payload)

@@ -1,5 +1,7 @@
 """Story folders, the registry and settings, without HTTP. Run: python -m unittest discover -s tests"""
 import json
+import os
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -187,7 +189,7 @@ class StoryFolderTest(TempHome):
 
     def test_newer_formats_are_refused_with_a_hint(self):
         project = json.loads(story.encode(story.BLANK_PROJECT))
-        project['version'] = 3
+        project['version'] = max(story.FORMAT_VERSIONS) + 1
         with self.assertRaisesRegex(ValueError, 'newer version'):
             story.validate_project(project)
 
@@ -237,6 +239,99 @@ class FormatTwoSaveTest(TempHome):
         self.studio.save(project, revision)
         self.assertEqual(self.studio.read_project()[0]['version'], 1)
         self.assertFalse((self.root / story.V1_BACKUP_NAME).exists())
+
+
+class SubfolderTest(TempHome):
+    def setUp(self):
+        super().setUp()
+        self.root = self.folder('Folders')
+        self.studio = story.prepare_story(self.root, 'Folders')
+
+    def test_media_names_may_be_relative_paths_inside_the_folder(self):
+        good = ['a.png', 'Batch/a.png', 'Batch one/Day 2/clip.MP4', 'x/' * story.MAX_FOLDER_DEPTH + 'deep.webp',
+                'name with: colon.png']  # Top-level names keep their old rules.
+        bad = ['', '/a.png', 'a/', 'a.txt', '../a.png', 'Batch/../a.png', './a.png', 'Batch/./a.png', 'Batch//a.png',
+               'Batch\\a.png', 'C:/a.png', 'c:a/b.png', '.hidden/a.png', 'trailing./a.png', 'trailing /a.png',
+               'CON/a.png', 'nul.txt/a.png', 'http://example.com/a.png', 'x/' * (story.MAX_FOLDER_DEPTH + 1) + 'a.png',
+               'a\x00/b.png', 'x' * 497 + '.png', None, 5]
+        self.assertEqual([name for name in good if not story.safe_media(name)], [])
+        self.assertEqual([name for name in bad if story.safe_media(name)], [])
+
+    def picture(self, file):
+        project, revision = self.studio.read_project()
+        project['chapters'][0]['blocks'].append({'id': 'b-' + str(len(project['chapters'][0]['blocks'])),
+                                                 'type': 'image', 'file': file, 'caption': ''})
+        return project, revision
+
+    def test_a_subfolder_picture_makes_the_story_format_3_with_a_backup(self):
+        original = (self.root / story.PROJECT_NAME).read_bytes()
+        revision = self.studio.save(*self.picture('Batch/one.png'))
+        self.assertEqual(self.studio.read_project()[0]['version'], 3)
+        self.assertEqual((self.root / story.version_backup_name(1)).read_bytes(), original)
+        self.studio.save(*self.picture('two.png'))  # Top-level pictures still work as before.
+        self.assertEqual((self.root / story.version_backup_name(1)).read_bytes(), original)  # Kept once.
+        self.assertTrue(revision)
+
+    def test_format_2_goes_to_3_keeping_a_v2_backup(self):
+        project, revision = self.studio.read_project()
+        project['elements'] = [{'id': 'el-1', 'kind': 'character', 'name': 'One', 'pictures': [{'file': 'Batch/look.png'}]}]
+        project['elements'][0]['pictures'] = []
+        revision = self.studio.save(project, revision)
+        v2 = (self.root / story.PROJECT_NAME).read_bytes()
+        project['elements'][0]['portrait'] = 'Batch/look.png'
+        self.studio.save(project, revision)
+        saved = self.studio.read_project()[0]
+        self.assertEqual((saved['version'], saved['elements'][0]['portrait']), (3, 'Batch/look.png'))
+        self.assertEqual((self.root / story.version_backup_name(2)).read_bytes(), v2)
+
+    def test_format_3_is_kept_when_characters_are_added_or_paths_removed(self):
+        project = self.picture('Batch/one.png')[0]
+        project['elements'] = [{'id': 'el-1', 'kind': 'character', 'name': 'One'}]
+        project = story.validate_project(project)
+        self.assertEqual(project['version'], 3)
+        project['chapters'][0]['blocks'] = []
+        self.assertEqual(story.validate_project(project)['version'], 3)  # Never lowered once it is 3.
+
+    def test_extra_image_descriptions_of_subfolder_files_count_as_references(self):
+        project, _ = self.studio.read_project()
+        project['extraImages'] = [{'file': 'Batch/one.png', 'title': 'One', 'category': 'Scene'}]
+        self.assertEqual(story.validate_project(project)['version'], 3)
+
+    def test_scan_skips_story_folders_hidden_folders_and_links(self):
+        (self.root / 'Kept' / 'Deeper').mkdir(parents=True)
+        (self.root / 'Kept' / 'Deeper' / 'a.png').write_bytes(b'a')
+        (self.root / 'Inner story').mkdir()
+        (self.root / 'Inner story' / story.PROJECT_NAME).write_text('{}')
+        (self.root / 'Inner story' / 'b.png').write_bytes(b'b')
+        (self.root / '.thumbs').mkdir()
+        (self.root / '.thumbs' / 'c.png').write_bytes(b'c')
+        self.assertEqual([image['file'] for image in self.studio.images()[0]], ['Kept/Deeper/a.png'])
+        self.assertIsNotNone(self.studio.media_file('Kept/Deeper/a.png'))
+        for name in ['Inner story/b.png', '.thumbs/c.png', 'Kept/missing.png', 'Kept/Deeper']:
+            self.assertIsNone(self.studio.media_file(name), name)
+
+    @unittest.skipUnless(os.name == 'nt', 'junctions exist only on Windows')
+    def test_junctions_to_other_folders_are_not_followed(self):
+        outside = self.folder('Elsewhere')
+        (outside / 'private.png').write_bytes(b'private')
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(self.root / 'Junction'), str(outside)],
+                       check=True, capture_output=True)
+        self.assertEqual(self.studio.images()[0], [])
+        self.assertIsNone(self.studio.media_file('Junction/private.png'))
+
+    def test_scan_limits_depth_folders_and_files(self):
+        deep = self.root
+        for level in range(story.MAX_FOLDER_DEPTH + 1):
+            deep = deep / f'level {level}'
+            deep.mkdir()
+            (deep / 'here.png').write_bytes(b'x')
+        files = [image['file'] for image in self.studio.images()[0]]
+        self.assertEqual(len(files), story.MAX_FOLDER_DEPTH)
+        self.assertEqual(max(file.count('/') for file in files), story.MAX_FOLDER_DEPTH)
+        with mock.patch.object(story, 'MAX_LISTED_MEDIA', 3):
+            self.assertEqual(len(self.studio.images()[0]), 3)
+        with mock.patch.object(story, 'MAX_SCANNED_FOLDERS', 2):
+            self.assertEqual(len(self.studio.images()[0]), 2)
 
 
 class PathsTest(TempHome):
