@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 (2026-11-05)
+
 ### New
 
 - **Pictures in subfolders.** The library now also finds images and videos in folders inside the story folder, and shows them as folders you can open, with a path to go back up. Searching and filtering look through the open folder and every folder inside it, and show where each match is.
